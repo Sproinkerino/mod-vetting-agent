@@ -1,4 +1,3 @@
-// FR-I1-I4. Renders above all report content.
 export function isDegraded(report) {
   const p = report.provenance;
   return (
@@ -27,10 +26,10 @@ export default function RunIntegrityStrip({ report }) {
   const distinctComments = new Set(report.findings.map((f) => f.id)).size;
 
   return (
-    <div className={`integrity-strip ${degraded ? 'integrity-degraded' : ''}`}>
+    <div className="integrity-strip">
       {degraded && (
         <div className="integrity-flag-banner" role="alert">
-          <strong>Degraded run</strong> — score meters suppressed, vote blocked until cleared at the gate.
+          <strong>This run has integrity issues — read the findings with that in mind.</strong>
           <ul>
             {degradedReasons(report).map((r) => (
               <li key={r}>{r}</li>
@@ -38,45 +37,11 @@ export default function RunIntegrityStrip({ report }) {
           </ul>
         </div>
       )}
-      <dl className="integrity-facts">
-        <div>
-          <dt>Window</dt>
-          <dd>
-            {p.window_start ? p.window_start.slice(0, 10) : '—'} – {p.window_end ? p.window_end.slice(0, 10) : '—'}
-          </dd>
-        </div>
-        <div>
-          <dt>Fetched</dt>
-          <dd>{p.comments_fetched}</dd>
-        </div>
-        <div>
-          <dt>Flagged</dt>
-          <dd>{p.comments_flagged}</dd>
-        </div>
-        <div>
-          {/* FR-I2: headline count is distinct source comments, total findings secondary */}
-          <dt>Findings</dt>
-          <dd>
-            {distinctComments} comments <span className="secondary-count">({report.findings.length} findings)</span>
-          </dd>
-        </div>
-        <div>
-          <dt>Dropped (ungrounded)</dt>
-          <dd>{p.findings_dropped_ungrounded}</dd>
-        </div>
-        <div>
-          <dt>Unparseable</dt>
-          <dd>{p.unparseable_count ?? 0}</dd>
-        </div>
-        <div>
-          <dt>Rubric</dt>
-          <dd>{report.contract.rubric_version}</dd>
-        </div>
-        <div>
-          <dt>Contract</dt>
-          <dd className="mono">{report.contract.prompt_template_hash}</dd>
-        </div>
-      </dl>
+      <p className="integrity-summary">
+        {p.comments_fetched} comments checked, {p.comments_flagged} flagged, {distinctComments} with
+        findings ({report.findings.length} total) — window {p.window_start ? p.window_start.slice(0, 10) : '—'} to{' '}
+        {p.window_end ? p.window_end.slice(0, 10) : '—'}
+      </p>
     </div>
   );
 }

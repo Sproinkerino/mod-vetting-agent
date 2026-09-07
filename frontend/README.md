@@ -1,68 +1,59 @@
-# Applicant review frontend
+# Applicant review — single-report tool
 
-Implements `frontend-prd.md` (the PRD) against fixtures,
-per its own M1 milestone: "M1 lands against hand-written fixtures before
-stage 0 delivers anything real."
+Redesigned from the original queue/gate/vote frontend (see git history /
+`frontend-prd.md` for that version) per direct feedback: "design is all
+wrong... a tool where you can input a username then a single report comes
+out. No queue etc. Easier to read report."
 
-**No `mod-vetting-frontend-plan.md` (the referenced design doc) was
-available to build against.** `src/index.css` is this build's own
-reasonable defaults instead — evidence-first, no color-coded verdicts, AA
-contrast, print-first — consistent with the PRD's stated principles, but
-not a real design system. Swap freely.
+## What it is
 
-## What's implemented
+One input field. Type a Reddit username, click "Generate report," wait
+(a real run takes a couple of minutes — dozens of concurrency-capped LLM
+calls), read the report. No queue, no gate, no vote, no audit log, no
+mock store. Talks directly to the deployed API
+(`https://mod-vetting-api.onrender.com`, see `src/lib/api.js`).
 
-- **M1** — Finding card + fixtures. All 6 required fixture cases
-  (`src/fixtures/findingCards.js`): mixed true/false/unknown booleans,
-  multi-category (one comment id, two category tags), top-level comment,
-  judgment finding with replies, and a deliberately corrupted offset that
-  correctly suppresses its level and shows the integrity error (FR-C4).
-- **M2** — Report route + print CSS (`@media print` in `index.css`, A4/Letter
-  via `@page`, `break-inside: avoid` on finding cards, queue/gate/vote
-  hidden via `.no-print`, permalinks print as visible URLs).
-- **M3** — Integrity strip + degraded state (`RunIntegrityStrip.jsx`):
-  meters suppressed and vote blocked when `findings_dropped_ungrounded >
-  3`, any unparseable item, triage flag rate below 2%, or any stage
-  excluded items.
-- **M4** — Queue, grouped by state with the required per-row info.
-- **M5** — Gate + vote + audit log, wired to a local mock store (see
-  below) — full path from gate release through quorum, logged.
-- **M6** (calibration workbench) — out of scope, PRD marks it V2.
+**This produces a real evidence document about a real, identifiable
+person.** Only enter an actual applicant under actual consideration.
 
-## A real gap this build found and fixed in the *backend*
+## What changed from the PRD version
 
-Building against the PRD's own acceptance criteria (FR-C2–C4: highlight
-the quote inside the full comment body at `quote_offset`) surfaced that
-`report.json`'s `findings[]` never actually carried the full comment
-`body`, `parent_body`, or `replies` — only the isolated `quote`. An
-offset into a body the frontend never receives is unusable. Fixed in the
-backend (`../mod_vetting/report.py`, `stage2_adjudicate.py`,
-`orchestrator.py`) and the schema, before this frontend was built against
-it — see `../README.md` and `../implementation-spec.md`'s revision notes.
+- Removed: Queue, Gate, Vote, Audit log, and the local mock store that
+  backed them (`lib/mockStore.jsx` — deleted; votes/queue-state/audit
+  trail aren't part of `report.json` and need a real backend API this
+  project doesn't have).
+- Removed: the per-finding boolean grid (c1-c5, b1-b4, j1-j4, etc.) —
+  explicitly dropped per feedback, not just collapsed. A finding now
+  shows category + level + the cited quote highlighted in its full
+  context, nothing else. (`lib/findings.js`'s `BOOLEAN_GROUPS`/
+  `CLEARING_CRITERIA` and the `CategoryBlock`/`BooleanPill` components
+  that rendered them are gone.)
+- Removed the react-router-dom dependency — there's only one screen now
+  (search, or report), no routes to manage.
+- Kept: the quote-offset integrity check (a citation that doesn't
+  actually appear in the comment body renders as an error with its level
+  withheld, never a fabricated highlight), the degraded-run banner, hard
+  fail chips (still only the 4 real codes), and score meters (still
+  level+anchor verbatim, no color-scale, no composite score).
 
-Also found: the first pass of `findingCards.js` had every "should be
-valid" fixture's `quote_offset` hand-typed and **wrong** — verified with
-a throwaway script before catching it. Fixed by computing offsets via
-`body.indexOf(quote)` at load time instead of hand-typing them, so this
-class of mistake can't recur silently.
+## Known limitation
 
-## What's mocked, and why
-
-`votes`, `queue state`, and the `audit log` are **not** part of
-`report.json` (see `schema/report.schema.json`) — they're application
-state a real backend API would own, which doesn't exist yet for this
-pipeline (it currently only produces one `report.json` per run, no
-gate/vote/audit endpoints). `src/lib/mockStore.js` is a local, in-memory
-stand-in so M4/M5 are demonstrable against the fixtures; swap it for real
-API calls when that backend exists. The frontend itself still never
-computes/derives a *report* value (PRD §1 "Never") — grouping findings by
-comment id and validating an offset are display bookkeeping and an
-integrity check, not new derived scores.
+`api.py`'s job tracking is an in-memory dict in the API process. It does
+NOT survive a Render redeploy or restart, and if the service ever runs
+more than one instance, a request can land on an instance that never saw
+the job. Confirmed this actually happens during a deploy window while
+testing this build (a job started right as a push triggered a redeploy
+404'd on the next poll; retried a minute later once the deploy settled
+and it worked cleanly end to end). Fine for a single always-on instance
+between deploys; not durable enough to promise a report survives a
+production incident. Real fix would be to have `GET /jobs/{id}` fall back
+to the SQLite storage layer (already durable, already checkpointed) — not
+done in this pass.
 
 ## Running it
 
 ```bash
 npm install
-npm run dev    # http://localhost:5173 (or next free port)
+npm run dev
 npm run build
 ```
