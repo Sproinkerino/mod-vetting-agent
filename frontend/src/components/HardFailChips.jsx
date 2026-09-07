@@ -11,7 +11,7 @@ const LABELS = {
 // ever renders codes it's actually given, and only the four known ones;
 // an unrecognized code is dropped rather than guessed at, since a chip
 // for a check that doesn't exist is a false assurance either way.
-export default function HardFailChips({ hardFails }) {
+export default function HardFailChips({ hardFails, snippets }) {
   const known = hardFails.filter((hf) => hf.code in LABELS);
   return (
     <section className="hard-fail-chips" aria-label="Hard fails">
@@ -28,7 +28,7 @@ export default function HardFailChips({ hardFails }) {
             <span className="chip-finding-links">
               {hf.finding_ids.map((id) => (
                 <a key={id} href={`#finding-${id}`}>
-                  {id}
+                  {snippets?.get(id) || id}
                 </a>
               ))}
             </span>

@@ -8,7 +8,7 @@ const CATEGORY_LABELS = {
 // FR-R2: level and anchor render verbatim from JSON -- no colour scale,
 // no red/amber/green, no composite/overall score anywhere.
 // FR-R3: level > 0 with empty finding_ids renders as an error, not a score.
-export default function ScoreMeters({ scores }) {
+export default function ScoreMeters({ scores, snippets }) {
   return (
     <section className="score-meters" aria-label="Scores">
       {Object.entries(scores).map(([category, score]) => {
@@ -29,7 +29,7 @@ export default function ScoreMeters({ scores }) {
                   <div className="score-finding-links">
                     {score.finding_ids.map((id) => (
                       <a key={id} href={`#finding-${id}`} className="finding-link">
-                        {id}
+                        {snippets?.get(id) || id}
                       </a>
                     ))}
                   </div>
@@ -43,7 +43,7 @@ export default function ScoreMeters({ scores }) {
                     <span className="contradicting-label">Contradicting evidence:</span>
                     {score.contradicting_finding_ids.map((id) => (
                       <a key={id} href={`#finding-${id}`} className="finding-link">
-                        {id}
+                        {snippets?.get(id) || id}
                       </a>
                     ))}
                   </div>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { askArchive, startJob, waitForJob } from './lib/api';
-import { groupFindingsById } from './lib/findings';
+import { groupFindingsById, buildSnippetMap } from './lib/findings';
 import FindingCard from './components/FindingCard';
 import RunIntegrityStrip from './components/RunIntegrityStrip';
 import HardFailChips from './components/HardFailChips';
@@ -90,6 +90,7 @@ function Dashboard({ report, onNewSearch }) {
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const allGroups = useMemo(() => groupFindingsById(report.findings).sort((a, b) => b.categoryFindings[0].created_utc - a.categoryFindings[0].created_utc), [report.findings]);
+  const snippets = useMemo(() => buildSnippetMap(report.findings), [report.findings]);
   const groups = allGroups.filter((group) => {
     const categoryMatch = filter === 'all' || group.categoryFindings.some((f) => f.category === filter);
     const text = `${group.categoryFindings[0].body} ${group.categoryFindings[0].subreddit}`.toLowerCase();
@@ -108,8 +109,8 @@ function Dashboard({ report, onNewSearch }) {
         <div className='case-status'><span className='status-dot' /> {report._cache?.hit ? `Cached result · ${Math.max(1, Math.round(report._cache.age_seconds / 3600))}h old` : 'Fresh analysis'}</div>
       </section>
       <RunIntegrityStrip report={report} />
-      <HardFailChips hardFails={report.hard_fails} />
-      <ScoreMeters scores={report.scores} />
+      <HardFailChips hardFails={report.hard_fails} snippets={snippets} />
+      <ScoreMeters scores={report.scores} snippets={snippets} />
       <AskTheArchive report={report} />
       <BehaviorSummary metrics={report.behavior_metrics} />
       <section className='insight-grid'>

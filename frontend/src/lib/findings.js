@@ -36,3 +36,22 @@ export function groupFindingsById(findings) {
 export function cardHasJudgmentFinding(categoryFindings) {
   return categoryFindings.some((f) => f.category === 'judgment');
 }
+
+/**
+ * Raw comment ids (e.g. "t1_abc123") are meaningless to a reader -- a
+ * short excerpt of the actual cited text is what tells them which
+ * finding a link points at. Builds { id -> snippet } from findings[],
+ * using each id's first quote (falling back to its body) truncated to a
+ * readable length. Pure display formatting, not a derived score/finding.
+ */
+export function buildSnippetMap(findings, maxLength = 64) {
+  const map = new Map();
+  for (const f of findings) {
+    if (map.has(f.id)) continue;
+    const source = f.quote || f.body || '';
+    const trimmed = source.trim();
+    const snippet = trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trimEnd()}…` : trimmed;
+    map.set(f.id, snippet || f.id);
+  }
+  return map;
+}
