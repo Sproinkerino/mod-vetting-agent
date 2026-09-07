@@ -19,10 +19,17 @@ Flags:
   hostility_individual
     Insult, mockery, contempt, or an attack aimed at a person.
     Flag regardless of whether it looks deserved or reciprocal.
+    This includes intelligence/competence attacks (stupid, idiot, moron),
+    vulgarities aimed at someone, belittling (for example "angry little
+    man"), name-calling, and sarcastic personal put-downs. Profanity is
+    not required, and profanity about a situation alone is not enough.
 
   hostility_group
     A generalisation, slur, or hostility aimed at a group of people.
     Flag whether or not the group is a protected class.
+    Race, ethnicity, and nationality groups must not be missed: negative
+    claims about Indians, Malays, Black people, or any equivalent named
+    group belong here. A neutral mention of a group does not.
 
   rule_reasoning
     Reasoning about rules, moderation, enforcement, or what should be
@@ -30,6 +37,8 @@ Flags:
 
   self_description
     States their own occupation, industry, employer type, or affiliation.
+    Include plain statements such as "I work in data" even when the job
+    is incidental to the rest of the comment.
 
   coordination
     Organising votes, pile-ons, or cross-subreddit action.
@@ -94,6 +103,8 @@ Answer every question with true, false, or null.
 
 CONDUCT
  c1  Contains an insult, slur, mockery, or expression of contempt.
+     Includes name-calling, intelligence or competence attacks, vulgarity
+     directed at a person, and belittling phrases such as "angry little man."
  c2  That contempt is aimed at a specific person, not an idea, object,
      institution, or the commenter themselves.
  c3  It is the commenter's own speech — not quoted, reported, or
@@ -106,6 +117,8 @@ CONDUCT
 BIAS
  b1  References a group by a protected attribute: race, ethnicity,
      religion, nationality, gender, sexuality, disability, age.
+     Named groups such as Indians, Malays, and Black people are included;
+     merely mentioning them is not negative by itself.
  b2  Attaches a negative generalisation or hostility to that group.
  b3  It is the commenter's own speech, in earnest (c3 and c4 both hold).
  b4  Aimed at a specific person on the basis of their membership in it.

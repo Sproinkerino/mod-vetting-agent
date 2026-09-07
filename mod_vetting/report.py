@@ -81,6 +81,7 @@ def build_findings(kept: list[Finding], corpus_meta: dict) -> list[dict]:
                     # parent_body/replies for context (FR-C2, FR-C7).
                     "body": meta.get("body", ""),
                     "parent_body": meta.get("parent_body"),
+                    "submission_title": meta.get("submission_title"),
                     "replies": meta.get("replies", []),
                 }
             )
@@ -123,6 +124,34 @@ def compute_hard_fails(findings: list[dict]) -> list[dict]:
         finding_ids = rule(findings)
         result.append({"code": code, "triggered": bool(finding_ids), "finding_ids": finding_ids})
     return result
+
+
+def compute_behavior_metrics(findings: list[dict]) -> dict:
+    """Transparent incident-based signals; never a personality diagnosis."""
+    unique = {}
+    for finding in findings:
+        unique[(finding["id"], finding["category"])] = finding
+    conduct = [f for (_, category), f in unique.items() if category == "conduct"]
+    bias = [f for (_, category), f in unique.items() if category == "bias"]
+    coordination = [f for (_, category), f in unique.items() if category == "coordination"]
+    hostility = min(100, sum(10 if (f.get("level") or 0) <= 1 else 25 for f in conduct))
+    anger = min(100, sum(25 if f.get("answers", {}).get("c5") else 10 for f in conduct))
+    hatred = min(100, sum(45 if (f.get("level") or 0) >= 3 else 30 for f in bias))
+    mobilization = min(100, sum(30 for _ in coordination))
+    overall = round(hostility * 0.45 + anger * 0.25 + hatred * 0.25 + mobilization * 0.05)
+    if overall >= 75:
+        summary = "The sampled history contains frequent or severe hostile interactions. Read the cited conversations before drawing conclusions."
+    elif overall >= 40:
+        summary = "The sampled history contains multiple supported signs of hostile or escalating interaction."
+    elif overall >= 15:
+        summary = "The sampled history contains isolated supported signs of hostile interaction."
+    else:
+        summary = "The sampled history contains few supported signs of hostile interaction."
+    return {
+        "overall": overall, "hostility": hostility, "anger": anger,
+        "group_hatred": hatred, "mobilization": mobilization, "summary": summary,
+        "basis": "Incident points from grounded findings; 100 is a display cap, not a probability.",
+    }
 
 
 HUMAN_GATE_THRESHOLDS = {
@@ -181,10 +210,12 @@ def assemble_report(
     window_start: str | None = None,
     window_end: str | None = None,
     purge_after_days: int = 90,
+    activity_items: list | None = None,
 ) -> dict:
     findings = build_findings(kept_findings, corpus_meta)
     scores = compute_scores(findings)
     hard_fails = compute_hard_fails(findings)
+    behavior_metrics = compute_behavior_metrics(findings)
 
     report = {
         "job_id": job_id,
@@ -193,7 +224,22 @@ def assemble_report(
         "contract": contract,
         "scores": scores,
         "hard_fails": hard_fails,
+        "behavior_metrics": behavior_metrics,
         "findings": findings,
+        "activity": [
+            {
+                "id": item.id,
+                "type": item.type,
+                "title": item.title,
+                "submission_title": item.submission_title,
+                "body": item.body,
+                "subreddit": item.subreddit,
+                "score": item.score,
+                "created_utc": item.created_utc,
+                "permalink": item.permalink,
+            }
+            for item in (activity_items or [])
+        ],
         "recommendation": {
             "text": "Not generated -- stages 3-5 (synthesise/steelman/reconcile) are not "
             "implemented in this build. This report contains evidence and computed "

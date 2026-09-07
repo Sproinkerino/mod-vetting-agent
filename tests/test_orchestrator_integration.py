@@ -20,7 +20,10 @@ from mod_vetting.fetch import RedditItem
 from mod_vetting.orchestrator import run_job
 from mod_vetting.storage import Storage
 
-pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="requires ANTHROPIC_API_KEY")
+pytestmark = pytest.mark.skipif(
+    not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENROUTER_API_KEY")),
+    reason="requires ANTHROPIC_API_KEY or OPENROUTER_API_KEY",
+)
 
 SYNTHETIC_APPLICANT = "totally_fake_test_applicant_zzz"
 

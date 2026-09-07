@@ -94,7 +94,11 @@ def run_job(
 
     # --- adjudicating ---
     storage.set_state(job.job_id, "adjudicating")
-    outcomes = adjudicate_flagged(flagged_comments, applicant_username, rules, register_notes, api_key=api_key)
+    triage_flags_by_id = {r.id: set(r.flags) for r in triage_results if r.flags}
+    outcomes = adjudicate_flagged(
+        flagged_comments, applicant_username, rules, register_notes,
+        api_key=api_key, triage_flags_by_id=triage_flags_by_id,
+    )
 
     unparseable_count = 0
     excluded_count = 0  # true exclusions only -- unparseable/error. context_unavailable is
@@ -127,6 +131,7 @@ def run_job(
             "permalink": c.permalink, "created_utc": c.created_utc, "subreddit": c.subreddit,
             "context_note": o.context_note, "register_note": o.register_note,
             "body": c.body, "parent_body": o.parent_body, "replies": o.replies,
+            "submission_title": c.submission_title,
         }
         for c, o in findings_input
     }
@@ -157,6 +162,7 @@ def run_job(
         any_stage_excluded=excluded_count > 0,
         window_start=iso(window_start),
         window_end=iso(window_end),
+        activity_items=items,
     )
     storage.set_state(job.job_id, "awaiting_human")
     storage.checkpoint_stage(job.job_id, "awaiting_human", report)

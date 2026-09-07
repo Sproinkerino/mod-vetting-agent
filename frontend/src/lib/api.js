@@ -1,4 +1,6 @@
-const API_BASE = 'https://mod-vetting-api.onrender.com';
+// Defaults to the deployed API; override with VITE_API_BASE for local dev
+// against a backend running on 127.0.0.1:8000.
+const API_BASE = import.meta.env.VITE_API_BASE || 'https://mod-vetting-api.onrender.com';
 
 // Deliberately no per-subreddit rules/register-notes input -- the tool is
 // "type a username, get a report." These generic defaults match the
@@ -28,6 +30,14 @@ export async function pollJob(jobId) {
   const res = await fetch(`${API_BASE}/jobs/${jobId}`);
   if (!res.ok) throw new Error(`Failed to fetch job (${res.status})`);
   return res.json(); // { status, report, error }
+}
+
+export async function askArchive(jobId, question) {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/ask`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }),
+  });
+  if (!res.ok) throw new Error(`Could not ask the archive (${res.status})`);
+  return res.json();
 }
 
 /** Polls until the job leaves "running", calling onTick with each poll

@@ -81,7 +81,10 @@ def triage_batch(comments: list, batch_id: str, api_key: str | None = None) -> l
     user_prompt = render_triage_user_prompt(batch_id, shuffled)
 
     try:
-        parsed = call_model(TRIAGE_SYSTEM_PROMPT, user_prompt, TRIAGE_MODEL, TRIAGE_TOOL_SCHEMA, api_key=api_key)
+        parsed = call_model(
+            TRIAGE_SYSTEM_PROMPT, user_prompt, TRIAGE_MODEL, TRIAGE_TOOL_SCHEMA,
+            max_tokens=2600, api_key=api_key,
+        )
         return _validate_triage_output(parsed, batch_ids)
     except SchemaValidationError as e:
         # One retry with the validator error appended to the user turn
@@ -89,7 +92,10 @@ def triage_batch(comments: list, batch_id: str, api_key: str | None = None) -> l
         # job to mark `unparseable` and exclude -- this function raises,
         # it doesn't swallow.
         retry_prompt = user_prompt + f"\n\nYour previous output failed validation: {e}\nReturn valid JSON only."
-        parsed = call_model(TRIAGE_SYSTEM_PROMPT, retry_prompt, TRIAGE_MODEL, TRIAGE_TOOL_SCHEMA, api_key=api_key)
+        parsed = call_model(
+            TRIAGE_SYSTEM_PROMPT, retry_prompt, TRIAGE_MODEL, TRIAGE_TOOL_SCHEMA,
+            max_tokens=2600, api_key=api_key,
+        )
         return _validate_triage_output(parsed, batch_ids)
 
 

@@ -65,6 +65,20 @@
       }
     },
 
+    "behavior_metrics": {
+      "type": "object",
+      "required": ["overall", "hostility", "anger", "group_hatred", "mobilization", "summary", "basis"],
+      "properties": {
+        "overall": {"type": "integer", "minimum": 0, "maximum": 100},
+        "hostility": {"type": "integer", "minimum": 0, "maximum": 100},
+        "anger": {"type": "integer", "minimum": 0, "maximum": 100},
+        "group_hatred": {"type": "integer", "minimum": 0, "maximum": 100},
+        "mobilization": {"type": "integer", "minimum": 0, "maximum": 100},
+        "summary": {"type": "string"},
+        "basis": {"type": "string"}
+      }
+    },
+
     "findings": {
       "type": "array",
       "items": {
@@ -80,6 +94,7 @@
           "quote_offset": {"type": "integer"},
           "body": {"type": "string"},
           "parent_body": {"type": ["string", "null"]},
+          "submission_title": {"type": ["string", "null"]},
           "replies": {"type": "array", "items": {"type": "object"}},
           "category": {"enum": ["conduct", "judgment", "bias",
                                 "coordination", "doxxing",
@@ -89,6 +104,25 @@
           "answers": {"type": "object"},
           "context_note": {"type": ["string", "null"]},
           "register_note": {"type": ["string", "null"]}
+        }
+      }
+    },
+
+    "activity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "body", "subreddit", "score", "created_utc", "permalink"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"enum": ["post", "comment"]},
+          "title": {"type": ["string", "null"]},
+          "submission_title": {"type": ["string", "null"]},
+          "body": {"type": "string"},
+          "subreddit": {"type": "string"},
+          "score": {"type": "integer"},
+          "created_utc": {"type": "integer"},
+          "permalink": {"type": "string", "format": "uri"}
         }
       }
     },

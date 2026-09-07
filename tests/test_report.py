@@ -6,9 +6,22 @@ from mod_vetting.report import (
     build_findings,
     check_human_gate,
     compute_hard_fails,
+    compute_behavior_metrics,
     compute_scores,
     validate_report,
 )
+
+
+def test_behavior_metrics_are_incident_based_and_capped():
+    findings = [
+        {"id": "c1", "category": "conduct", "level": 3, "answers": {"c5": True}},
+        {"id": "b1", "category": "bias", "level": 3, "answers": {}},
+    ]
+    metrics = compute_behavior_metrics(findings)
+    assert metrics["hostility"] == 25
+    assert metrics["anger"] == 25
+    assert metrics["group_hatred"] == 45
+    assert 0 <= metrics["overall"] <= 100
 
 
 def _conduct_finding(id_, level_answers, quote="you idiot"):

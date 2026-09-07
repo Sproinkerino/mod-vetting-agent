@@ -90,6 +90,13 @@ class Storage:
                 reason TEXT NOT NULL,
                 recorded_at REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS report_cache (
+                cache_key TEXT PRIMARY KEY,
+                applicant_username TEXT NOT NULL,
+                report TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
             """
         )
         self._conn.commit()
@@ -183,3 +190,21 @@ class Storage:
                 "SELECT stage, item_id, reason FROM excluded_items WHERE job_id = ?", (job_id,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def put_cached_report(self, cache_key: str, applicant_username: str, report: dict, now: float | None = None):
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT OR REPLACE INTO report_cache (cache_key, applicant_username, report, created_at) VALUES (?, ?, ?, ?)",
+                (cache_key, applicant_username.casefold(), json.dumps(report), now if now is not None else time.time()),
+            )
+
+    def get_cached_report(self, cache_key: str, max_age_seconds: float, now: float | None = None) -> tuple[dict, float] | None:
+        current = now if now is not None else time.time()
+        with self._cursor() as cur:
+            row = cur.execute("SELECT report, created_at FROM report_cache WHERE cache_key = ?", (cache_key,)).fetchone()
+        if row is None:
+            return None
+        age = max(0.0, current - row["created_at"])
+        if age >= max_age_seconds:
+            return None
+        return json.loads(row["report"]), age

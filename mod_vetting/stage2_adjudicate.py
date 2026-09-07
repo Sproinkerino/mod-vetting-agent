@@ -17,6 +17,7 @@ from .prompts import ADJUDICATE_SYSTEM_PROMPT, render_adjudicate_user_prompt
 
 CONCURRENCY_CAP = 20
 HARD_FAIL_PENDING_REVIEW_THRESHOLD = 400
+REPLY_CONTEXT_FLAGS = {"rule_reasoning", "factual_assertion", "doxxing"}
 
 ANSWER_KEYS = {
     "c1", "c2", "c3", "c4", "c5",
@@ -87,14 +88,25 @@ def adjudicate_one(
     rules: str,
     register_notes: str,
     api_key: str | None = None,
+    triage_flags: set[str] | None = None,
 ) -> AdjudicationOutcome:
     context_unavailable_reason = None
     parent_body, replies = None, []
+    include_replies = triage_flags is None or bool(triage_flags & REPLY_CONTEXT_FLAGS)
     try:
-        parent_body, replies = fetch_thread_context(comment.id, comment.parent_id, comment.link_id)
+        parent_body, replies = fetch_thread_context(
+            comment.id, comment.parent_id, comment.link_id, include_replies=include_replies
+        )
     except ThreadContextUnavailable as e:
         context_unavailable_reason = str(e)
 
+    # A deliberately-skipped fetch (cost optimisation: this comment's
+    # triage flags didn't need replies) must render to the model exactly
+    # like a genuine fetch failure -- "not fetched", never "fetched and
+    # empty". Collapsing the two would let the model read absence-by-
+    # design as evidence that no correction happened, which is precisely
+    # the confusion fetch.py's own docstring says must never occur.
+    replies_skipped = include_replies is False and not context_unavailable_reason
     user_prompt = render_adjudicate_user_prompt(
         rules=rules,
         register_notes=register_notes,
@@ -102,19 +114,23 @@ def adjudicate_one(
         body=comment.body,
         replies=replies,
         commenter_author=applicant_username,
-        context_unavailable=context_unavailable_reason is not None,
+        context_unavailable=(context_unavailable_reason is not None) or replies_skipped,
     )
 
     try:
         parsed = _validate(
-            call_model(ADJUDICATE_SYSTEM_PROMPT, user_prompt, ADJUDICATE_MODEL, ADJUDICATE_TOOL_SCHEMA, api_key=api_key)
+            call_model(
+                ADJUDICATE_SYSTEM_PROMPT, user_prompt, ADJUDICATE_MODEL, ADJUDICATE_TOOL_SCHEMA,
+                max_tokens=1400, api_key=api_key,
+            )
         )
     except SchemaValidationError as e:
         retry_prompt = user_prompt + f"\n\nYour previous output failed validation: {e}\nReturn valid JSON only."
         try:
             parsed = _validate(
                 call_model(
-                    ADJUDICATE_SYSTEM_PROMPT, retry_prompt, ADJUDICATE_MODEL, ADJUDICATE_TOOL_SCHEMA, api_key=api_key
+                    ADJUDICATE_SYSTEM_PROMPT, retry_prompt, ADJUDICATE_MODEL, ADJUDICATE_TOOL_SCHEMA,
+                    max_tokens=1400, api_key=api_key
                 )
             )
         except SchemaValidationError as e2:
@@ -144,6 +160,7 @@ def adjudicate_flagged(
     rules: str,
     register_notes: str,
     api_key: str | None = None,
+    triage_flags_by_id: dict[str, set[str]] | None = None,
 ) -> list[AdjudicationOutcome]:
     if len(flagged_comments) > HARD_FAIL_PENDING_REVIEW_THRESHOLD:
         raise RuntimeError(
@@ -154,7 +171,10 @@ def adjudicate_flagged(
     outcomes: list[AdjudicationOutcome | None] = [None] * len(flagged_comments)
     with ThreadPoolExecutor(max_workers=CONCURRENCY_CAP) as pool:
         futures = {
-            pool.submit(adjudicate_one, c, applicant_username, rules, register_notes, api_key): i
+            pool.submit(
+                adjudicate_one, c, applicant_username, rules, register_notes, api_key,
+                (triage_flags_by_id or {}).get(c.id),
+            ): i
             for i, c in enumerate(flagged_comments)
         }
         for fut in as_completed(futures):

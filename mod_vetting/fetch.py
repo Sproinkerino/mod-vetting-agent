@@ -32,6 +32,7 @@ ARCTIC_SHIFT_POSTS = "https://arctic-shift.photon-reddit.com/api/posts/search"
 ARCTIC_SHIFT_COMMENTS = "https://arctic-shift.photon-reddit.com/api/comments/search"
 ARCTIC_SHIFT_COMMENT_IDS = "https://arctic-shift.photon-reddit.com/api/comments/ids"
 ARCTIC_SHIFT_COMMENT_TREE = "https://arctic-shift.photon-reddit.com/api/comments/tree"
+ARCTIC_SHIFT_POST_IDS = "https://arctic-shift.photon-reddit.com/api/posts/ids"
 PAGE_LIMIT = 100
 REQUEST_TIMEOUT = 15.0
 
@@ -62,6 +63,7 @@ class RedditItem:
     author: str
     parent_id: str | None = None  # comments only: "t3_x" (post) or "t1_x" (comment)
     link_id: str | None = None  # comments only: "t3_x", the submission this belongs to
+    submission_title: str | None = None
 
 
 def _normalize(raw: dict, item_type: str) -> RedditItem:
@@ -80,6 +82,7 @@ def _normalize(raw: dict, item_type: str) -> RedditItem:
         author=raw.get("author", ""),
         parent_id=raw.get("parent_id") if item_type == "comment" else None,
         link_id=raw.get("link_id") if item_type == "comment" else None,
+        submission_title=raw.get("title") if item_type == "post" else None,
     )
 
 
@@ -91,7 +94,32 @@ def fetch_applicant_history(username: str, comment_cap: int = 1000, post_cap: in
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
         posts = _fetch_recent(client, ARCTIC_SHIFT_POSTS, username, post_cap, "post")
         comments = _fetch_recent(client, ARCTIC_SHIFT_COMMENTS, username, comment_cap, "comment")
+        _hydrate_submission_titles(client, comments)
     return sorted(posts + comments, key=lambda i: i.created_utc)
+
+
+def _hydrate_submission_titles(client: httpx.Client, comments: list[RedditItem]) -> None:
+    """Attach submission titles in bounded batch lookups for display.
+
+    Purely decorative metadata -- a failure here must never abort the
+    whole investigation (which by this point has already paid for real
+    LLM calls downstream). One bad batch is skipped, not fatal.
+    """
+    raw_ids = sorted({c.link_id.removeprefix("t3_") for c in comments if c.link_id})
+    titles: dict[str, str] = {}
+    for start in range(0, len(raw_ids), 100):
+        batch = raw_ids[start : start + 100]
+        try:
+            resp = client.get(ARCTIC_SHIFT_POST_IDS, params={"ids": ",".join(batch)})
+            resp.raise_for_status()
+            for post in resp.json().get("data", []):
+                if post.get("id") and post.get("title"):
+                    titles[post["id"]] = post["title"]
+        except (httpx.HTTPError, ValueError):
+            continue  # decorative only -- comments simply keep submission_title=None for this batch
+    for comment in comments:
+        if comment.link_id:
+            comment.submission_title = titles.get(comment.link_id.removeprefix("t3_"))
 
 
 def _fetch_recent(client: httpx.Client, base_url: str, username: str, cap: int, item_type: str) -> list[RedditItem]:
@@ -115,7 +143,13 @@ def _fetch_recent(client: httpx.Client, base_url: str, username: str, cap: int, 
     return items[:cap]
 
 
-def fetch_thread_context(comment_id: str, parent_id: str | None, link_id: str | None) -> tuple[str | None, list[dict]]:
+def fetch_thread_context(
+    comment_id: str,
+    parent_id: str | None,
+    link_id: str | None,
+    *,
+    include_replies: bool = True,
+) -> tuple[str | None, list[dict]]:
     """Returns (parent_body, replies) for the comment identified by
     comment_id, given the parent_id/link_id already retained on its
     RedditItem from the original author-search fetch.
@@ -131,7 +165,10 @@ def fetch_thread_context(comment_id: str, parent_id: str | None, link_id: str | 
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
             parent_body = _fetch_parent_body(client, parent_id)
-            replies = _fetch_replies(client, comment_id, link_id, REPLY_DEPTH) if link_id else []
+            # A full tree can contain hundreds of comments. Direct-hostility
+            # review needs the parent, while only continuation-dependent
+            # rubric categories need the expensive replies payload.
+            replies = _fetch_replies(client, comment_id, link_id, REPLY_DEPTH) if link_id and include_replies else []
     except httpx.HTTPError as e:
         raise ThreadContextUnavailable(f"fetch failed for comment {comment_id}: {e}") from e
 

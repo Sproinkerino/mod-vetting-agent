@@ -63,3 +63,11 @@ def test_excluded_items_are_recorded_not_silently_dropped(storage):
     assert len(excluded) == 1
     assert excluded[0]["item_id"] == "item42"
     assert excluded[0]["reason"] == "unparseable"
+
+
+def test_report_cache_reuses_fresh_report_and_expires(storage):
+    report = {"job_id": "cached-job", "findings": []}
+    storage.put_cached_report("user:contract", "SomeUser", report, now=1000)
+    cached = storage.get_cached_report("user:contract", max_age_seconds=3 * 86400, now=1000 + 60)
+    assert cached == (report, 60)
+    assert storage.get_cached_report("user:contract", max_age_seconds=3 * 86400, now=1000 + 3 * 86400) is None
