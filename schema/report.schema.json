@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["job_id", "applicant", "contract", "scores",
+               "hard_fails", "findings", "recommendation", "provenance"],
+  "properties": {
+    "job_id": {"type": "string", "format": "uuid"},
+    "state": {"enum": ["draft", "awaiting_human", "awaiting_response",
+                       "ready_for_vote", "decided", "purged"]},
+
+    "applicant": {
+      "type": "object",
+      "required": ["username", "account_age_days", "sub_tenure_days",
+                   "comments_in_sub", "subs_modded"],
+      "properties": {
+        "username": {"type": "string"},
+        "account_age_days": {"type": "integer"},
+        "sub_tenure_days": {"type": "integer"},
+        "comments_in_sub": {"type": "integer"},
+        "subs_modded": {"type": "integer"},
+        "timezone": {"type": ["string", "null"]},
+        "stated_availability": {"type": ["string", "null"]}
+      }
+    },
+
+    "contract": {
+      "type": "object",
+      "description": "Pinned identity of the run. Reports with differing contracts are not comparable.",
+      "required": ["rubric_version", "prompt_template_hash", "models"],
+      "properties": {
+        "rubric_version": {"type": "string"},
+        "prompt_template_hash": {"type": "string"},
+        "models": {
+          "type": "object",
+          "properties": {
+            "triage": {"type": "string"},
+            "adjudicate": {"type": "string"},
+            "synthesise": {"type": "string"},
+            "steelman": {"type": "string"}
+          }
+        }
+      }
+    },
+
+    "scores": {
+      "type": "object",
+      "properties": {
+        "conduct": {"$ref": "#/$defs/score"},
+        "judgment": {"$ref": "#/$defs/score"},
+        "bias": {"$ref": "#/$defs/score"},
+        "coordination": {"$ref": "#/$defs/score"}
+      }
+    },
+
+    "hard_fails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {"enum": ["hate_speech", "targeted_harassment", "doxxing",
+                            "vote_manipulation"]},
+          "triggered": {"type": "boolean"},
+          "finding_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "permalink", "created_utc", "quote",
+                     "category", "level", "answers"],
+        "properties": {
+          "id": {"type": "string"},
+          "permalink": {"type": "string", "format": "uri"},
+          "created_utc": {"type": "integer"},
+          "subreddit": {"type": "string"},
+          "quote": {"type": "string"},
+          "quote_offset": {"type": "integer"},
+          "body": {"type": "string"},
+          "parent_body": {"type": ["string", "null"]},
+          "replies": {"type": "array", "items": {"type": "object"}},
+          "category": {"enum": ["conduct", "judgment", "bias",
+                                "coordination", "doxxing",
+                                "self_description"]},
+          "level": {"type": ["integer", "null"], "minimum": 0, "maximum": 5},
+          "weight": {"enum": ["pattern", "incident", "context"]},
+          "answers": {"type": "object"},
+          "context_note": {"type": ["string", "null"]},
+          "register_note": {"type": ["string", "null"]}
+        }
+      }
+    },
+
+    "scenario_test": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item_id": {"type": "string"},
+          "applicant_call": {"type": "string"},
+          "applicant_reasoning": {"type": "string"},
+          "assessment": {"type": "string"},
+          "level": {"type": "integer", "minimum": 0, "maximum": 5}
+        }
+      }
+    },
+
+    "challenges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target": {"type": "string"},
+          "challenge": {"type": "string"},
+          "strength": {"enum": ["weak", "credible", "strong"]},
+          "resolution": {"enum": ["upheld", "score_lowered", "recorded_as_dissent"]}
+        }
+      }
+    },
+
+    "recommendation": {
+      "type": "object",
+      "properties": {
+        "text": {"type": "string", "maxLength": 600},
+        "dissent": {"type": ["string", "null"]}
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "run_at": {"type": "string", "format": "date-time"},
+        "window_start": {"type": ["string", "null"], "format": "date-time"},
+        "window_end": {"type": ["string", "null"], "format": "date-time"},
+        "comments_fetched": {"type": "integer"},
+        "comments_flagged": {"type": "integer"},
+        "findings_upheld": {"type": "integer"},
+        "findings_dropped_ungrounded": {"type": "integer"},
+        "unparseable_count": {"type": "integer"},
+        "triage_flag_rate": {"type": "number"},
+        "any_stage_excluded": {"type": "boolean"},
+        "purge_after": {"type": "string", "format": "date"}
+      }
+    }
+  },
+
+  "$defs": {
+    "score": {
+      "type": "object",
+      "required": ["level", "anchor", "finding_ids"],
+      "properties": {
+        "level": {"type": "integer", "minimum": 0, "maximum": 5},
+        "anchor": {"type": "string"},
+        "finding_ids": {"type": "array", "items": {"type": "string"}},
+        "contradicting_finding_ids": {"type": "array",
+                                      "items": {"type": "string"}}
+      }
+    }
+  }
+}
