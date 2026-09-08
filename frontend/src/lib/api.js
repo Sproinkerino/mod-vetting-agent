@@ -1,6 +1,8 @@
-// Defaults to the deployed API; override with VITE_API_BASE for local dev
-// against a backend running on 127.0.0.1:8000.
-const API_BASE = import.meta.env.VITE_API_BASE || 'https://mod-vetting-api.onrender.com';
+// Local development talks to the local API; production defaults to Render.
+// VITE_API_BASE can override either environment explicitly.
+const API_BASE = import.meta.env.VITE_API_BASE || (
+  import.meta.env.DEV ? 'http://127.0.0.1:8000' : 'https://mod-vetting-api.onrender.com'
+);
 
 // Deliberately no per-subreddit rules/register-notes input -- the tool is
 // "type a username, get a report." These generic defaults match the
@@ -12,12 +14,13 @@ const DEFAULT_RULES =
   'Spam or repeated self-promotion. Doxxing or sharing private information. Ban evasion.';
 const DEFAULT_REGISTER_NOTES = 'No subreddit-specific house style provided -- read literally.';
 
-export async function startJob(username) {
+export async function startJob(target) {
+  const isUrl = target.length > 30;
   const res = await fetch(`${API_BASE}/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      username,
+      ...(isUrl ? { url: target } : { username: target }),
       rules: DEFAULT_RULES,
       register_notes: DEFAULT_REGISTER_NOTES,
     }),

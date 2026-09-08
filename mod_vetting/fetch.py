@@ -25,6 +25,7 @@ keeps off the triage hot path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 
@@ -84,6 +85,40 @@ def _normalize(raw: dict, item_type: str) -> RedditItem:
         link_id=raw.get("link_id") if item_type == "comment" else None,
         submission_title=raw.get("title") if item_type == "post" else None,
     )
+
+
+def comment_id_from_url(url: str) -> str:
+    """Extract the comment id from a canonical Reddit URL."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.hostname.lower().endswith("reddit.com"):
+        raise ValueError("Enter a full reddit.com comment URL")
+    parts = [part for part in parsed.path.split("/") if part]
+    try:
+        comments_at = parts.index("comments")
+    except ValueError as exc:
+        raise ValueError("URL is not a Reddit comments URL") from exc
+    tail = parts[comments_at + 2 :]
+    if len(tail) < 2:
+        raise ValueError("URL points to a post, not a specific comment")
+    comment_id = tail[-1]
+    if not comment_id.isalnum():
+        raise ValueError("Could not read the Reddit comment id")
+    return comment_id
+
+
+def fetch_comment_from_url(url: str) -> RedditItem:
+    comment_id = comment_id_from_url(url)
+    with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+        resp = client.get(ARCTIC_SHIFT_COMMENT_IDS, params={"ids": comment_id})
+        resp.raise_for_status()
+        rows = resp.json().get("data", [])
+        if not rows:
+            raise ValueError("That Reddit comment was not found in the public archive")
+        item = _normalize(rows[0], "comment")
+        _hydrate_submission_titles(client, [item])
+    if not item.author or item.author in {"[deleted]", "AutoModerator"}:
+        raise ValueError("That comment does not have an analyzable Reddit author")
+    return item
 
 
 def fetch_applicant_history(username: str, comment_cap: int = 1000, post_cap: int = 100) -> list[RedditItem]:

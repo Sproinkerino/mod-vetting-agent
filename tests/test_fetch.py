@@ -6,7 +6,20 @@ only saw top-level comments as a result -- a reply buried under a
 top-level comment silently looked like "no replies," not an error.
 """
 
-from mod_vetting.fetch import _flatten_tree
+import pytest
+
+from mod_vetting.fetch import _flatten_tree, comment_id_from_url
+
+
+def test_comment_id_from_canonical_reddit_url():
+    assert comment_id_from_url("https://www.reddit.com/r/test/comments/abc123/a_title/xyz789/") == "xyz789"
+
+
+def test_comment_id_rejects_post_only_and_non_reddit_urls():
+    with pytest.raises(ValueError, match="specific comment"):
+        comment_id_from_url("https://www.reddit.com/r/test/comments/abc123/a_title/")
+    with pytest.raises(ValueError, match="reddit.com"):
+        comment_id_from_url("https://example.com/r/test/comments/abc/title/xyz")
 
 
 def _listing(children):

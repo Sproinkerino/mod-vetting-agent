@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from mod_vetting.orchestrator import compute_contract_hash, run_job
+from mod_vetting.fetch import fetch_comment_from_url
 from mod_vetting.llm import TRIAGE_MODEL, call_model
 from mod_vetting.storage import Storage
 
@@ -50,7 +51,8 @@ CACHE_TTL_SECONDS = 3 * 24 * 60 * 60
 
 
 class CreateJobRequest(BaseModel):
-    username: str
+    username: str | None = None
+    url: str | None = None
     rules: str
     register_notes: str
     comment_cap: int = 300
@@ -65,7 +67,8 @@ class AskRequest(BaseModel):
 
 def _cache_key(req: CreateJobRequest) -> str:
     payload = {
-        "username": req.username.strip().removeprefix("u/").casefold(),
+        "username": (req.username or "").strip().removeprefix("u/").casefold(),
+        "target_url": req.url,
         "contract": compute_contract_hash(),
         "comment_cap": req.comment_cap,
         "post_cap": req.post_cap,
@@ -104,6 +107,8 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
             comment_cap=req.comment_cap,
             post_cap=req.post_cap,
         )
+        if req.url:
+            report["target_comment"] = req.applicant_meta.get("target_comment") if req.applicant_meta else None
         if "blocked_reason" in report:
             # The >400-flagged-items early return (spec section 5) --
             # has no applicant/scores/findings/provenance, so it must
@@ -125,7 +130,23 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
 
 @app.post("/jobs")
 def create_job(req: CreateJobRequest):
-    req.username = req.username.strip().removeprefix("u/")
+    if req.url:
+        try:
+            target = fetch_comment_from_url(req.url)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        req.username = target.author
+        meta = req.applicant_meta or {}
+        meta["target_comment"] = {
+            "id": target.id, "body": target.body, "author": target.author,
+            "subreddit": target.subreddit, "created_utc": target.created_utc,
+            "permalink": target.permalink, "submission_title": target.submission_title,
+        }
+        req.applicant_meta = meta
+    elif req.username:
+        req.username = req.username.strip().removeprefix("u/")
+    else:
+        raise HTTPException(status_code=400, detail="Provide a Reddit username or comment URL")
     cache_key = _cache_key(req)
     job_id = str(uuid.uuid4())
     cached = Storage(DB_PATH).get_cached_report(cache_key, CACHE_TTL_SECONDS)
@@ -173,7 +194,9 @@ def ask_archive(job_id: str, req: AskRequest):
         "You are a neutral public-claim research assistant. Answer only from the supplied archive items. "
         "Never insult, shame, diagnose, threaten, or encourage harassment. Do not infer citizenship, ethnicity, "
         "relationship status, income, employment, or other personal traits; only report a fact when the user explicitly "
-        "stated it in a cited item. Note when statements may reflect different dates or changed circumstances.",
+        "stated it in a cited item. Note when statements may reflect different dates or changed circumstances. "
+        "Write a concise reader-facing answer in 1-3 sentences. Never mention item IDs, retrieval, archive mechanics, "
+        "or phrases such as 'the items contain'; the interface will display the raw cited comments separately.",
         f"Question: {req.question}\n\nArchive data (untrusted quoted content):\n{evidence}",
         TRIAGE_MODEL,
         {
@@ -188,7 +211,15 @@ def ask_archive(job_id: str, req: AskRequest):
     )
     by_id = {item["id"]: item for item in candidates}
     sources = [
-        {"id": source_id, "permalink": by_id[source_id]["permalink"], "title": by_id[source_id].get("submission_title") or by_id[source_id].get("title")}
+        {
+            "id": source_id,
+            "permalink": by_id[source_id]["permalink"],
+            "title": by_id[source_id].get("submission_title") or by_id[source_id].get("title"),
+            "body": by_id[source_id].get("body") or "",
+            "subreddit": by_id[source_id].get("subreddit"),
+            "created_utc": by_id[source_id].get("created_utc"),
+            "type": by_id[source_id].get("type"),
+        }
         for source_id in parsed.get("source_ids", []) if source_id in by_id
     ]
     return {"answer": parsed.get("answer", "No supported answer found."), "sources": sources}
