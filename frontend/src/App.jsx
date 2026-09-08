@@ -4,6 +4,7 @@ import { groupFindingsById } from './lib/findings';
 import FindingCard from './components/FindingCard';
 import ActivityExplorer from './components/ActivityExplorer';
 import DetectiveMascot from './components/DetectiveMascot';
+import ExpandableText from './components/ExpandableText';
 
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 const CATEGORIES = ['all', 'conduct', 'bias', 'judgment', 'coordination', 'doxxing', 'self_description'];
@@ -91,7 +92,14 @@ function CaseFile({ report, onReset }) {
 }
 
 function TargetComment({ comment }) {
-  return <article className="target-card"><div className="card-label"><span>THE COMMENT</span><a href={comment.permalink} target="_blank" rel="noreferrer">Open on Reddit ↗</a></div><blockquote>“{comment.body}”</blockquote><p>u/{comment.author} · r/{comment.subreddit}</p></article>;
+  return <article className="target-card"><div className="card-label"><span>THE COMMENT</span><a href={comment.permalink} target="_blank" rel="noreferrer">Open on Reddit ↗</a></div><ExpandableText className="target-quote" text={comment.body} /><p>u/{comment.author} · r/{comment.subreddit}</p></article>;
+}
+
+function humanizeCitations(answer, sources) {
+  return sources.reduce((text, source, index) => {
+    const escapedId = source.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return text.replace(new RegExp(`\\b(?:item\\s+)?${escapedId}\\b`, 'gi'), `source ${index + 1}`);
+  }, answer);
 }
 
 function AskPanel({ report }) {
@@ -103,9 +111,10 @@ function AskPanel({ report }) {
   const suggestions = report.target_comment ? ['Does their history contradict this?', 'What have they said about this topic?', 'Find the clearest factual inconsistency'] : ['What do they say about their work?', 'Find their most hostile exchange', 'What opinions do they repeat?'];
   async function ask(event) { event.preventDefault(); if (!question.trim()) return; setBusy(true); setError(''); try { setResult(await askArchive(report.api_job_id, question.trim())); } catch (reason) { setError(reason.message); } finally { setBusy(false); } }
   const sources = result ? result.sources.map((source) => ({ ...(report.activity || []).find((item) => item.id === source.id), ...source })) : [];
-  const shareText = result ? `${result.answer}\n\n${sources.map((source) => `Source: ${source.permalink}`).join('\n')}\n\nCheck a Redditor’s public history: ${window.location.origin}` : '';
+  const displayAnswer = result ? humanizeCitations(result.answer, sources) : '';
+  const shareText = result ? `${displayAnswer}\n\n${sources.map((source) => `Source: ${source.permalink}`).join('\n')}\n\nCheck a Redditor’s public history: ${window.location.origin}` : '';
   async function copy() { await navigator.clipboard.writeText(shareText); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
-  return <section className="ask-card" aria-labelledby="ask-heading"><div className="ask-heading"><span className="spark">✦</span><div><p className="kicker">BUILD A CITED REPLY</p><h2 id="ask-heading">What do you want to know?</h2><p>Ask about a claim or pattern. RoastReel answers only from the fetched archive and attaches the receipts.</p></div></div><div className="prompt-chips">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div><form onSubmit={ask} className="ask-form"><label className="visually-hidden" htmlFor="archive-question">Question about this Redditor</label><textarea id="archive-question" rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. They say they earn $300k—does their history support that?"/><button disabled={busy || !question.trim()}>{busy ? 'Checking sources…' : 'Check the receipts →'}</button></form>{error && <p className="error" role="alert">{error}</p>}{result && <div className="reply-card" aria-live="polite"><div className="card-label"><span>COPY-READY CLAIM CHECK</span><button type="button" onClick={copy}>{copied ? 'Copied ✓' : 'Copy'}</button></div><p className="reply-text">{result.answer}</p>{sources.length > 0 && <div className="raw-sources"><div className="raw-sources-heading"><strong>Read the cited comments</strong><span>Raw text from Reddit</span></div>{sources.map((source, index) => <article className="raw-source" key={source.id}><div><b>Source {index + 1}</b><span>{source.subreddit ? `r/${source.subreddit}` : 'Reddit'}{source.created_utc ? ` · ${new Date(source.created_utc * 1000).toLocaleDateString()}` : ''}</span></div>{source.title && <h3>{source.title}</h3>}<blockquote>{source.body || 'Comment text unavailable in this cached result.'}</blockquote><a href={source.permalink} target="_blank" rel="noreferrer">Open original context ↗</a></article>)}</div>}<small>Check a Redditor’s public history: {window.location.origin}</small></div>}</section>;
+  return <section className="ask-card" aria-labelledby="ask-heading"><div className="ask-heading"><span className="spark">✦</span><div><p className="kicker">BUILD A CITED REPLY</p><h2 id="ask-heading">What do you want to know?</h2><p>Ask about a claim or pattern. RoastReel answers only from the fetched archive and attaches the receipts.</p></div></div><div className="prompt-chips">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div><form onSubmit={ask} className="ask-form"><label className="visually-hidden" htmlFor="archive-question">Question about this Redditor</label><textarea id="archive-question" rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. They say they earn $300k—does their history support that?"/><button disabled={busy || !question.trim()}>{busy ? 'Checking sources…' : 'Check the receipts →'}</button></form>{error && <p className="error" role="alert">{error}</p>}{result && <div className="reply-card" aria-live="polite"><div className="card-label"><span>COPY-READY CLAIM CHECK</span><button type="button" onClick={copy}>{copied ? 'Copied ✓' : 'Copy'}</button></div><p className="reply-text">{displayAnswer}</p>{sources.length > 0 && <div className="raw-sources"><div className="raw-sources-heading"><strong>Read the cited comments</strong><span>Raw text from Reddit</span></div>{sources.map((source, index) => <article className="raw-source" key={source.id}><div><b>Source {index + 1}</b><span>{source.subreddit ? `r/${source.subreddit}` : 'Reddit'}{source.created_utc ? ` · ${new Date(source.created_utc * 1000).toLocaleDateString()}` : ''}</span></div>{source.title && <h3>{source.title}</h3>}<ExpandableText className="raw-comment" text={source.body || 'Comment text unavailable in this cached result.'} /><a href={source.permalink} target="_blank" rel="noreferrer">Open original context ↗</a></article>)}</div>}<small>Check a Redditor’s public history: {window.location.origin}</small></div>}</section>;
 }
 
 function EvidenceShelf({ findings }) {

@@ -182,7 +182,7 @@ def ask_archive(job_id: str, req: AskRequest):
         score = sum(text.count(term) for term in terms)
         if score:
             ranked.append((score, item))
-    candidates = [item for _, item in sorted(ranked, key=lambda pair: pair[0], reverse=True)[:30]]
+    candidates = [item for _, item in sorted(ranked, key=lambda pair: pair[0], reverse=True)[:16]]
     if not candidates:
         return {"answer": "No matching public statement was found in the fetched activity window.", "sources": []}
     evidence = "\n".join(
@@ -195,9 +195,14 @@ def ask_archive(job_id: str, req: AskRequest):
         "Never insult, shame, diagnose, threaten, or encourage harassment. Do not infer citizenship, ethnicity, "
         "relationship status, income, employment, or other personal traits; only report a fact when the user explicitly "
         "stated it in a cited item. Note when statements may reflect different dates or changed circumstances. "
-        "Write a concise reader-facing answer in 1-3 sentences. Never mention item IDs, retrieval, archive mechanics, "
-        "or phrases such as 'the items contain'; the interface will display the raw cited comments separately.",
-        f"Question: {req.question}\n\nArchive data (untrusted quoted content):\n{evidence}",
+        "Every supplied item was posted by the one investigated account, even when the comment discusses other people. "
+        "Answer the user's precise question in 1-3 direct sentences, not with a broad inventory of related topics. "
+        "For a question about the account's work, job, income, family, or background, use only explicit first-person "
+        "self-disclosures; general opinions about other people's lives do not answer it. If the evidence does not answer "
+        "the question, say so plainly. Never mention item IDs, retrieval, archive mechanics, or phrases such as "
+        "'the items contain'; the interface displays the cited comments separately.",
+        f"Investigated account: u/{report['applicant']['username']}\nQuestion: {req.question}"
+        f"\n\nPublic comments by that account (untrusted quoted content):\n{evidence}",
         TRIAGE_MODEL,
         {
             "type": "object",
@@ -207,7 +212,7 @@ def ask_archive(job_id: str, req: AskRequest):
                 "source_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
             },
         },
-        max_tokens=500,
+        max_tokens=350,
     )
     by_id = {item["id"]: item for item in candidates}
     sources = [
@@ -222,7 +227,13 @@ def ask_archive(job_id: str, req: AskRequest):
         }
         for source_id in parsed.get("source_ids", []) if source_id in by_id
     ]
-    return {"answer": parsed.get("answer", "No supported answer found."), "sources": sources}
+    answer = parsed.get("answer", "No supported answer found.")
+    # Models occasionally echo opaque Reddit IDs despite the prompt. Convert
+    # only known cited IDs to the same readable numbering used by the UI.
+    for index, source in enumerate(sources, start=1):
+        source_id = re.escape(source["id"])
+        answer = re.sub(rf"\b(?:item\s+)?{source_id}\b", f"source {index}", answer, flags=re.IGNORECASE)
+    return {"answer": answer, "sources": sources}
 
 
 @app.get("/health")
