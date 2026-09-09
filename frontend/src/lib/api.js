@@ -35,11 +35,20 @@ export async function pollJob(jobId) {
   return res.json(); // { status, report, error }
 }
 
-export async function askArchive(jobId, question) {
+export async function askArchive(jobId, question, report) {
   const res = await fetch(`${API_BASE}/jobs/${jobId}/ask`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question,
+      username: report?.applicant?.username,
+      activity: report?.activity || [],
+    }),
   });
-  if (!res.ok) throw new Error(`Could not ask the archive (${res.status})`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || `Could not ask the archive (${res.status})`);
+  }
   return res.json();
 }
 

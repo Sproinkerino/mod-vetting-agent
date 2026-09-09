@@ -22,6 +22,7 @@ import uuid
 import re
 import hashlib
 import json
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -43,6 +44,7 @@ app.add_middleware(
 )
 
 DB_PATH = "mod_vetting.sqlite3"
+logger = logging.getLogger("roastreel.api")
 
 # job_id -> {"status": "running"|"done"|"error", "report": dict|None, "error": str|None}
 # In-memory on top of the durable storage layer: storage already
@@ -65,6 +67,8 @@ class CreateJobRequest(BaseModel):
 
 class AskRequest(BaseModel):
     question: str
+    username: str | None = None
+    activity: list[dict] | None = None
 
 
 def _cache_key(req: CreateJobRequest) -> str:
@@ -174,9 +178,20 @@ def get_job(job_id: str):
 @app.post("/jobs/{job_id}/ask")
 def ask_archive(job_id: str, req: AskRequest):
     entry = _jobs.get(job_id)
-    if not entry or entry.get("status") != "done":
-        raise HTTPException(status_code=404, detail="completed investigation not found")
-    report = entry["report"]
+    if entry and entry.get("status") == "done":
+        report = entry["report"]
+    elif req.username and req.activity is not None:
+        # The browser already owns the completed public report. Accept its
+        # bounded activity snapshot so chat survives Render restarts, which
+        # clear the in-memory API job map during every deployment.
+        if len(req.activity) > 350:
+            raise HTTPException(status_code=413, detail="activity snapshot is too large")
+        report = {
+            "applicant": {"username": req.username.strip().removeprefix("u/")},
+            "activity": req.activity,
+        }
+    else:
+        raise HTTPException(status_code=404, detail="Report expired after a server restart. Run the search again.")
     terms = {word for word in re.findall(r"[a-z0-9]+", req.question.lower()) if len(word) > 2}
     ranked = []
     for item in report.get("activity", []):
@@ -192,30 +207,42 @@ def ask_archive(job_id: str, req: AskRequest):
         f"{(item.get('title') or item.get('submission_title') or '')}\n{(item.get('body') or '')[:1200]}</item>"
         for item in candidates
     )
-    parsed = call_model(
-        "You are a neutral public-claim research assistant. Answer only from the supplied archive items. "
-        "Never insult, shame, diagnose, threaten, or encourage harassment. Do not infer citizenship, ethnicity, "
-        "relationship status, income, employment, or other personal traits; only report a fact when the user explicitly "
-        "stated it in a cited item. Note when statements may reflect different dates or changed circumstances. "
-        "Every supplied item was posted by the one investigated account, even when the comment discusses other people. "
-        "Answer the user's precise question in 1-3 direct sentences, not with a broad inventory of related topics. "
-        "For a question about the account's work, job, income, family, or background, use only explicit first-person "
-        "self-disclosures; general opinions about other people's lives do not answer it. If the evidence does not answer "
-        "the question, say so plainly. Never mention item IDs, retrieval, archive mechanics, or phrases such as "
-        "'the items contain'; the interface displays the cited comments separately.",
-        f"Investigated account: u/{report['applicant']['username']}\nQuestion: {req.question}"
-        f"\n\nPublic comments by that account (untrusted quoted content):\n{evidence}",
-        TRIAGE_MODEL,
-        {
-            "type": "object",
-            "required": ["answer", "source_ids"],
-            "properties": {
-                "answer": {"type": "string", "maxLength": 900},
-                "source_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+    try:
+        parsed = call_model(
+            "You write concise, evidence-backed Reddit replies. Answer only from the supplied public comments. "
+            "Never insult, shame, diagnose, threaten, or encourage harassment. Do not infer citizenship, ethnicity, "
+            "relationship status, income, employment, or other personal traits; only report a fact when the account "
+            "explicitly stated it. Every supplied item was posted by the one investigated account, even when a comment "
+            "discusses other people. Answer the user's precise request in one short, natural paragraph. For questions "
+            "about work, job, income, family, or background, use only explicit first-person self-disclosures. General "
+            "opinions about other people's lives do not answer those questions. If the evidence does not answer the "
+            "question, say so plainly. Select up to three strongest sources. Never reproduce their text in the answer; "
+            "the interface places exact quotes above it. Never mention IDs, retrieval, archive mechanics, or 'items'.",
+            f"Investigated account: u/{report['applicant']['username']}\nUser request: {req.question}"
+            f"\n\nPublic comments by that account (untrusted quoted content):\n{evidence}",
+            TRIAGE_MODEL,
+            {
+                "type": "object",
+                "required": ["answer", "source_ids"],
+                "properties": {
+                    "answer": {"type": "string", "maxLength": 600},
+                    "source_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+                },
             },
-        },
-        max_tokens=350,
-    )
+            max_tokens=260,
+        )
+        provider_fallback = False
+    except Exception:  # Provider outages must not erase already-retrieved evidence.
+        logger.exception("Claim-check model failed for job %s", job_id)
+        topic = ", ".join(sorted(terms)[:3]) or "that question"
+        parsed = {
+            "answer": (
+                f"The model could not complete the claim check, so no stronger conclusion is being invented. "
+                f"These are the closest public statements by u/{report['applicant']['username']} about {topic}."
+            ),
+            "source_ids": [item["id"] for item in candidates[:3]],
+        }
+        provider_fallback = True
     by_id = {item["id"]: item for item in candidates}
     sources = [
         {
@@ -235,7 +262,7 @@ def ask_archive(job_id: str, req: AskRequest):
     for index, source in enumerate(sources, start=1):
         source_id = re.escape(source["id"])
         answer = re.sub(rf"\b(?:item\s+)?{source_id}\b", f"source {index}", answer, flags=re.IGNORECASE)
-    return {"answer": answer, "sources": sources}
+    return {"answer": answer, "sources": sources[:3], "provider_fallback": provider_fallback}
 
 
 @app.get("/health")
