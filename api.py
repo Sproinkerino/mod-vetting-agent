@@ -244,6 +244,12 @@ def ask_archive(job_id: str, req: AskRequest):
         }
         provider_fallback = True
     by_id = {item["id"]: item for item in candidates}
+    selected_ids = [source_id for source_id in parsed.get("source_ids", []) if source_id in by_id]
+    for candidate in candidates:
+        if len(selected_ids) >= 3:
+            break
+        if candidate["id"] not in selected_ids:
+            selected_ids.append(candidate["id"])
     sources = [
         {
             "id": source_id,
@@ -254,7 +260,7 @@ def ask_archive(job_id: str, req: AskRequest):
             "created_utc": by_id[source_id].get("created_utc"),
             "type": by_id[source_id].get("type"),
         }
-        for source_id in parsed.get("source_ids", []) if source_id in by_id
+        for source_id in selected_ids
     ]
     answer = parsed.get("answer", "No supported answer found.")
     # Models occasionally echo opaque Reddit IDs despite the prompt. Convert
