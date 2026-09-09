@@ -22,9 +22,11 @@ import uuid
 import re
 import hashlib
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from mod_vetting.orchestrator import compute_contract_hash, run_job
@@ -239,3 +241,11 @@ def ask_archive(job_id: str, req: AskRequest):
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+# Render currently deploys this repository as one FastAPI web service.
+# Shipping the verified Vite bundle with it makes the product available at
+# the service root while leaving /jobs, /health and /docs as API routes.
+FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+if FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
