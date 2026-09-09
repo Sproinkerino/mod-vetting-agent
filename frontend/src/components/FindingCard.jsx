@@ -21,7 +21,6 @@ export default function FindingCard({ id, categoryFindings }) {
       <details className='context-details'><summary>View full comment{first.parent_body ? ' and context' : ''}</summary>{first.parent_body && <blockquote className='parent-comment'><span className='parent-label'>In reply to</span><p className='body-text'>{first.parent_body}</p></blockquote>}<HighlightedBody body={first.body} quote={first.quote} offset={first.quote_offset} /></details>
       {anyOffsetInvalid && <p className='offset-error-note' role='alert'>A citation failed its exact-text integrity check. Highlighting was suppressed.</p>}
       {showReplies && <div className='replies-block'><span className='replies-label'>What happened after</span>{first.replies?.length ? <ul className='replies-list'>{first.replies.map((reply) => <li key={reply.id}><strong>{reply.author}:</strong> {reply.body}</li>)}</ul> : <p className='no-replies'>No replies captured in this thread window.</p>}</div>}
-      {(first.context_note || first.register_note) && <div className='notes-block'>{first.context_note && <p>{first.context_note}</p>}{first.register_note && <p>{first.register_note}</p>}</div>}
     </article>
   );
 }
