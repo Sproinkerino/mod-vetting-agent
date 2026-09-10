@@ -31,7 +31,7 @@ def test_ask_survives_missing_in_memory_job_and_humanizes_ids(monkeypatch):
     monkeypatch.setattr(api_module, "call_model", reply_model)
     response = TestClient(api_module.app).post(
         "/jobs/job-lost-during-deploy/ask",
-        json={"question": "What do they say about their work?", "username": "example", "activity": _activity()},
+        json={"question": "What do they say about their work?", "username": "example", "activity": _activity(), "source_count": 3},
     )
 
     assert response.status_code == 200
@@ -46,6 +46,7 @@ def test_ask_survives_missing_in_memory_job_and_humanizes_ids(monkeypatch):
     assert captured["schema"]["required"] == ["opener", "answer", "source_ids"]
     assert captured["schema"]["properties"]["opener"]["maxLength"] == 100
     assert captured["schema"]["properties"]["answer"]["maxLength"] == 320
+    assert captured["schema"]["properties"]["source_ids"]["maxItems"] == 3
     assert captured["kwargs"]["max_tokens"] == 160
 
 
@@ -56,7 +57,7 @@ def test_ask_returns_evidence_when_model_provider_fails(monkeypatch):
     monkeypatch.setattr(api_module, "call_model", fail)
     response = TestClient(api_module.app).post(
         "/jobs/missing/ask",
-        json={"question": "work", "username": "example", "activity": _activity()},
+        json={"question": "work", "username": "example", "activity": _activity(), "source_count": 3},
     )
 
     assert response.status_code == 200
@@ -132,3 +133,31 @@ def test_post_url_metadata_keeps_required_applicant_fields():
 
     assert meta["username"] == "example"
     assert meta["target_content"]["type"] == "post"
+
+def test_ask_defaults_to_one_source(monkeypatch):
+    monkeypatch.setattr(
+        api_module,
+        "call_model",
+        lambda *args, **kwargs: {
+            "opener": "One receipt is enough.",
+            "answer": "The closest statement answers it.",
+            "source_ids": ["abc120", "abc121", "abc122"],
+        },
+    )
+    response = TestClient(api_module.app).post(
+        "/jobs/default-one/ask",
+        json={"question": "work", "username": "example", "activity": _activity()},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()["sources"]) == 1
+
+
+def test_ask_rejects_source_counts_outside_one_to_three():
+    client = TestClient(api_module.app)
+    for count in (0, 4):
+        response = client.post(
+            "/jobs/invalid-source-count/ask",
+            json={"question": "work", "username": "example", "activity": _activity(), "source_count": count},
+        )
+        assert response.status_code == 422

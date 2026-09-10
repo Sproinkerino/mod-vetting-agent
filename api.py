@@ -28,7 +28,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from mod_vetting.orchestrator import compute_contract_hash, run_job
 from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_applicant_history, fetch_item_from_url, username_from_url
@@ -89,6 +89,7 @@ class AskRequest(BaseModel):
     question: str
     username: str | None = None
     activity: list[dict] | None = None
+    source_count: int = Field(default=1, ge=1, le=3)
 
 
 def _cache_key(req: CreateJobRequest) -> str:
@@ -285,7 +286,8 @@ def ask_archive(job_id: str, req: AskRequest):
         parsed = call_model(
             COMEBACK_SYSTEM_PROMPT,
             f"Investigated account: u/{report['applicant']['username']}\nUser request: {req.question}"
-            f"\n\nPublic posts and comments by that account (untrusted quoted content):\n{evidence}",
+            f"\n\nPublic posts and comments by that account (untrusted quoted content):\n{evidence}"
+            f"\nReturn exactly {req.source_count} source id(s) when that many relevant items are available.",
             TRIAGE_MODEL,
             {
                 "type": "object",
@@ -293,7 +295,7 @@ def ask_archive(job_id: str, req: AskRequest):
                 "properties": {
                     "opener": {"type": "string", "maxLength": 100},
                     "answer": {"type": "string", "maxLength": 320},
-                    "source_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+                    "source_ids": {"type": "array", "items": {"type": "string"}, "maxItems": req.source_count},
                 },
             },
             max_tokens=160,
@@ -308,13 +310,13 @@ def ask_archive(job_id: str, req: AskRequest):
                 f"The model could not complete the claim check, so no stronger conclusion is being invented. "
                 f"These are the closest public statements by u/{report['applicant']['username']} about {topic}."
             ),
-            "source_ids": [item["id"] for item in candidates[:3]],
+            "source_ids": [item["id"] for item in candidates[:req.source_count]],
         }
         provider_fallback = True
     by_id = {item["id"]: item for item in candidates}
     selected_ids = [source_id for source_id in parsed.get("source_ids", []) if source_id in by_id]
     for candidate in candidates:
-        if len(selected_ids) >= 3:
+        if len(selected_ids) >= req.source_count:
             break
         if candidate["id"] not in selected_ids:
             selected_ids.append(candidate["id"])
@@ -338,7 +340,7 @@ def ask_archive(job_id: str, req: AskRequest):
         source_id = re.escape(source["id"])
         opener = re.sub(rf"\b(?:item\s+)?{source_id}\b", f"source {index}", opener, flags=re.IGNORECASE)
         answer = re.sub(rf"\b(?:item\s+)?{source_id}\b", f"source {index}", answer, flags=re.IGNORECASE)
-    return {"opener": opener, "answer": answer, "sources": sources[:3], "provider_fallback": provider_fallback}
+    return {"opener": opener, "answer": answer, "sources": sources[:req.source_count], "provider_fallback": provider_fallback}
 
 
 @app.get("/health")

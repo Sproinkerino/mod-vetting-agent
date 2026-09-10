@@ -38,7 +38,7 @@ export async function pollJob(jobId) {
   return res.json(); // { status, report, error }
 }
 
-export async function askArchive(jobId, question, report) {
+export async function askArchive(jobId, question, report, sourceCount = 1) {
   const res = await fetch(`${API_BASE}/jobs/${jobId}/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -46,6 +46,7 @@ export async function askArchive(jobId, question, report) {
       question,
       username: report?.applicant?.username,
       activity: report?.activity || [],
+      source_count: sourceCount,
     }),
   });
   if (!res.ok) {
