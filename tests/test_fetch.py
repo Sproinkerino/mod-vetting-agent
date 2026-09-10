@@ -6,9 +6,10 @@ only saw top-level comments as a result -- a reply buried under a
 top-level comment silently looked like "no replies," not an error.
 """
 
+import httpx
 import pytest
 
-from mod_vetting.fetch import _flatten_tree, comment_id_from_url, username_from_url
+from mod_vetting.fetch import _flatten_tree, _resolve_reddit_share_url, comment_id_from_url, username_from_url
 
 
 def test_comment_id_from_canonical_reddit_url():
@@ -36,6 +37,15 @@ def test_username_from_url_ignores_comment_urls_and_rejects_lookalike_hosts():
     assert username_from_url("https://www.reddit.com/r/test/comments/abc/a_title/xyz/") is None
     with pytest.raises(ValueError, match="reddit.com"):
         username_from_url("https://notreddit.com/user/someone")
+
+
+def test_resolve_reddit_share_url_to_canonical_comment():
+    canonical = "https://www.reddit.com/r/masterduel/comments/1warb69/comment/p8nwex3"
+    transport = httpx.MockTransport(lambda request: httpx.Response(301, headers={"location": canonical}))
+    with httpx.Client(transport=transport) as client:
+        resolved = _resolve_reddit_share_url(client, "https://www.reddit.com/r/masterduel/s/e4T1bEvdTA")
+    assert resolved == canonical
+    assert comment_id_from_url(resolved) == "p8nwex3"
 
 
 def _listing(children):

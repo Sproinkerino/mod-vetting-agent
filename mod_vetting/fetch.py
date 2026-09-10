@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -123,9 +123,26 @@ def comment_id_from_url(url: str) -> str:
     return comment_id
 
 
+def _resolve_reddit_share_url(client: httpx.Client, url: str) -> str:
+    """Resolve Reddit's /r/<subreddit>/s/<token> links without following off-site redirects."""
+    parts = _reddit_url_parts(url)
+    is_share_link = len(parts) >= 4 and parts[0].lower() == "r" and parts[2].lower() == "s"
+    if not is_share_link:
+        return url
+    response = client.get(url, follow_redirects=False, headers={"User-Agent": "RoastReel/1.0"})
+    if response.status_code not in {301, 302, 303, 307, 308}:
+        raise ValueError(f"Reddit share link could not be resolved ({response.status_code})")
+    location = response.headers.get("location")
+    if not location:
+        raise ValueError("Reddit did not return a destination for that share link")
+    resolved = urljoin(url, location)
+    _reddit_url_parts(resolved)  # Reject an unexpected off-site redirect.
+    return resolved
+
+
 def fetch_comment_from_url(url: str) -> RedditItem:
-    comment_id = comment_id_from_url(url)
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+        comment_id = comment_id_from_url(_resolve_reddit_share_url(client, url))
         resp = client.get(ARCTIC_SHIFT_COMMENT_IDS, params={"ids": comment_id})
         resp.raise_for_status()
         rows = resp.json().get("data", [])
