@@ -52,3 +52,18 @@ def test_ask_returns_evidence_when_model_provider_fails(monkeypatch):
     payload = response.json()
     assert payload["provider_fallback"] is True
     assert len(payload["sources"]) == 3
+
+def test_comment_url_metadata_keeps_required_applicant_fields():
+    request = api_module.CreateJobRequest(
+        username="example",
+        url="https://reddit.com/r/test/comments/post/title/comment/",
+        rules="No harassment.",
+        register_notes="Read literally.",
+        applicant_meta={"target_comment": {"id": "comment", "body": "example"}},
+    )
+    meta = api_module._build_applicant_meta(request)
+
+    assert meta["username"] == "example"
+    assert meta["account_age_days"] == 0
+    assert meta["comments_in_sub"] == 0
+    assert meta["target_comment"]["id"] == "comment"

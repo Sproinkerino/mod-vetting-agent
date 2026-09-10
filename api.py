@@ -90,6 +90,19 @@ def _cache_key(req: CreateJobRequest) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def _build_applicant_meta(req: CreateJobRequest) -> dict:
+    meta = {
+        "username": req.username,
+        "account_age_days": 0,
+        "sub_tenure_days": 0,
+        "comments_in_sub": 0,
+        "subs_modded": 0,
+    }
+    meta.update(req.applicant_meta or {})
+    meta["username"] = req.username
+    return meta
+
+
 def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
     try:
         # sqlite3 connections are thread-affine (check_same_thread=True by
@@ -97,13 +110,7 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
         # thread cannot be used from this background thread. Open a fresh
         # one here rather than sharing the module-level connection.
         storage = Storage(DB_PATH)
-        applicant_meta = req.applicant_meta or {
-            "username": req.username,
-            "account_age_days": 0,
-            "sub_tenure_days": 0,
-            "comments_in_sub": 0,
-            "subs_modded": 0,
-        }
+        applicant_meta = _build_applicant_meta(req)
         report = run_job(
             storage=storage,
             applicant_username=req.username,
