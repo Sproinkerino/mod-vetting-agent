@@ -49,14 +49,21 @@ def call_model(
     max_tokens: int = 4096,
     api_key: str | None = None,
 ) -> dict:
-    # Anthropic wins whenever it's configured -- an explicit api_key
-    # argument or ANTHROPIC_API_KEY in the environment is the caller's
-    # clear intent, and must not be silently overridden by an unrelated
-    # OPENROUTER_API_KEY left set in the shell from other work. OpenRouter
-    # is only used as a fallback when Anthropic isn't configured at all.
+    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if provider == "openrouter":
+        if not openrouter_key:
+            raise RuntimeError("LLM_PROVIDER is openrouter but OPENROUTER_API_KEY is not set")
+        return _call_openrouter(
+            system_prompt, user_prompt, model, input_schema,
+            max_tokens=max_tokens, api_key=openrouter_key,
+        )
+
+    # Without an explicit provider selection, Anthropic remains the
+    # compatibility default whenever it is configured. OpenRouter is the
+    # fallback when only its key is present.
     api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
         if openrouter_key:
             return _call_openrouter(
                 system_prompt, user_prompt, model, input_schema,
