@@ -46,6 +46,24 @@ app.add_middleware(
 DB_PATH = "mod_vetting.sqlite3"
 logger = logging.getLogger("roastreel.api")
 
+COMEBACK_SYSTEM_PROMPT = (
+    "Write the final line that appears after quoted Reddit receipts. The answer must be ready to paste "
+    "directly as a reply to the investigated account, not advice to the person using this tool. Address the "
+    "account as you/your. Write one or two punchy sentences, 18-45 words total. Sound observant, dry, "
+    "confident, and human. Build the line around the clearest contradiction, mismatch, or revealing admission "
+    "supported by the strongest supplied comments. Do not merely summarize every quote. Never begin with or use "
+    "phrases such as Based on your comments, Based on their comments, You could say, You could point out, "
+    "The evidence suggests, This user, It appears, or Their history shows. Do not mention comments, sources, "
+    "evidence, IDs, retrieval, archives, or analysis in the answer. Do not reproduce the quotes because the "
+    "interface places them above the answer. Do not invent details or exaggerate frequency; say repeatedly only "
+    "when at least two supplied comments independently support it. Never insult, shame, diagnose, threaten, or "
+    "encourage harassment. Do not infer citizenship, ethnicity, relationship status, income, employment, or "
+    "other personal traits; use a personal fact only when the account explicitly stated it in first person. "
+    "If the supplied material cannot support a fair comeback to the request, answer exactly: Those receipts "
+    "don't support that claim. Select only the one to three sources that directly support the line."
+)
+
+
 # job_id -> {"status": "running"|"done"|"error", "report": dict|None, "error": str|None}
 # In-memory on top of the durable storage layer: storage already
 # checkpoints every stage (crash-resumable), this dict is just so the API
@@ -223,15 +241,7 @@ def ask_archive(job_id: str, req: AskRequest):
     )
     try:
         parsed = call_model(
-            "You write concise, evidence-backed Reddit replies. Answer only from the supplied public comments. "
-            "Never insult, shame, diagnose, threaten, or encourage harassment. Do not infer citizenship, ethnicity, "
-            "relationship status, income, employment, or other personal traits; only report a fact when the account "
-            "explicitly stated it. Every supplied item was posted by the one investigated account, even when a comment "
-            "discusses other people. Answer the user's precise request in one short, natural paragraph. For questions "
-            "about work, job, income, family, or background, use only explicit first-person self-disclosures. General "
-            "opinions about other people's lives do not answer those questions. If the evidence does not answer the "
-            "question, say so plainly. Select up to three strongest sources. Never reproduce their text in the answer; "
-            "the interface places exact quotes above it. Never mention IDs, retrieval, archive mechanics, or 'items'.",
+            COMEBACK_SYSTEM_PROMPT,
             f"Investigated account: u/{report['applicant']['username']}\nUser request: {req.question}"
             f"\n\nPublic comments by that account (untrusted quoted content):\n{evidence}",
             TRIAGE_MODEL,
@@ -239,11 +249,11 @@ def ask_archive(job_id: str, req: AskRequest):
                 "type": "object",
                 "required": ["answer", "source_ids"],
                 "properties": {
-                    "answer": {"type": "string", "maxLength": 600},
+                    "answer": {"type": "string", "maxLength": 320},
                     "source_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
                 },
             },
-            max_tokens=260,
+            max_tokens=160,
         )
         provider_fallback = False
     except Exception:  # Provider outages must not erase already-retrieved evidence.

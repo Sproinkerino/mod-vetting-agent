@@ -18,14 +18,16 @@ def _activity(count=4):
 
 
 def test_ask_survives_missing_in_memory_job_and_humanizes_ids(monkeypatch):
-    monkeypatch.setattr(
-        api_module,
-        "call_model",
-        lambda *args, **kwargs: {
+    captured = {}
+
+    def reply_model(system_prompt, user_prompt, model, schema, **kwargs):
+        captured.update(system_prompt=system_prompt, schema=schema, kwargs=kwargs)
+        return {
             "answer": "Item abc120 supports the statement; abc121 adds context.",
             "source_ids": ["abc120", "abc121", "abc122", "abc123"],
-        },
-    )
+        }
+
+    monkeypatch.setattr(api_module, "call_model", reply_model)
     response = TestClient(api_module.app).post(
         "/jobs/job-lost-during-deploy/ask",
         json={"question": "What do they say about their work?", "username": "example", "activity": _activity()},
@@ -36,6 +38,11 @@ def test_ask_survives_missing_in_memory_job_and_humanizes_ids(monkeypatch):
     assert payload["answer"] == "source 1 supports the statement; source 2 adds context."
     assert len(payload["sources"]) == 3
     assert payload["provider_fallback"] is False
+    assert "ready to paste" in captured["system_prompt"]
+    assert "Address the account as you/your" in captured["system_prompt"]
+    assert "Based on their comments" in captured["system_prompt"]
+    assert captured["schema"]["properties"]["answer"]["maxLength"] == 320
+    assert captured["kwargs"]["max_tokens"] == 160
 
 
 def test_ask_returns_evidence_when_model_provider_fails(monkeypatch):
