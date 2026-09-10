@@ -23,6 +23,7 @@ def test_ask_survives_missing_in_memory_job_and_humanizes_ids(monkeypatch):
     def reply_model(system_prompt, user_prompt, model, schema, **kwargs):
         captured.update(system_prompt=system_prompt, schema=schema, kwargs=kwargs)
         return {
+            "opener": "Item abc122 contradicts you.",
             "answer": "Item abc120 supports the statement; abc121 adds context.",
             "source_ids": ["abc120", "abc121", "abc122", "abc123"],
         }
@@ -35,12 +36,15 @@ def test_ask_survives_missing_in_memory_job_and_humanizes_ids(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["opener"] == "source 3 contradicts you."
     assert payload["answer"] == "source 1 supports the statement; source 2 adds context."
     assert len(payload["sources"]) == 3
     assert payload["provider_fallback"] is False
-    assert "ready to paste" in captured["system_prompt"]
-    assert "Address the account as you/your" in captured["system_prompt"]
-    assert "Based on their comments" in captured["system_prompt"]
+    assert "one-line opener" in captured["system_prompt"]
+    assert "4-10 words" in captured["system_prompt"]
+    assert "compulsive liar" in captured["system_prompt"]
+    assert captured["schema"]["required"] == ["opener", "answer", "source_ids"]
+    assert captured["schema"]["properties"]["opener"]["maxLength"] == 100
     assert captured["schema"]["properties"]["answer"]["maxLength"] == 320
     assert captured["kwargs"]["max_tokens"] == 160
 
@@ -58,7 +62,9 @@ def test_ask_returns_evidence_when_model_provider_fails(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider_fallback"] is True
+    assert payload["opener"] == "No supported comeback was generated."
     assert len(payload["sources"]) == 3
+
 
 def test_comment_url_metadata_keeps_required_applicant_fields():
     request = api_module.CreateJobRequest(
@@ -74,3 +80,18 @@ def test_comment_url_metadata_keeps_required_applicant_fields():
     assert meta["account_age_days"] == 0
     assert meta["comments_in_sub"] == 0
     assert meta["target_comment"]["id"] == "comment"
+
+def test_no_matching_activity_uses_the_same_reply_shape():
+    response = TestClient(api_module.app).post(
+        "/jobs/missing/ask",
+        json={"question": "unrelatedzz", "username": "example", "activity": _activity()},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "opener": "No matching receipt was found.",
+        "answer": "The fetched activity does not support that claim.",
+        "sources": [],
+        "provider_fallback": False,
+    }
