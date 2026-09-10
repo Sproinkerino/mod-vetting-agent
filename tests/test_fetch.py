@@ -9,7 +9,13 @@ top-level comment silently looked like "no replies," not an error.
 import httpx
 import pytest
 
-from mod_vetting.fetch import _flatten_tree, _resolve_reddit_share_url, comment_id_from_url, username_from_url
+from mod_vetting.fetch import (
+    _flatten_tree,
+    _resolve_reddit_share_url,
+    comment_id_from_url,
+    post_id_from_url,
+    username_from_url,
+)
 
 
 def test_comment_id_from_canonical_reddit_url():
@@ -21,6 +27,11 @@ def test_comment_id_rejects_post_only_and_non_reddit_urls():
         comment_id_from_url("https://www.reddit.com/r/test/comments/abc123/a_title/")
     with pytest.raises(ValueError, match="reddit.com"):
         comment_id_from_url("https://example.com/r/test/comments/abc/title/xyz")
+
+
+def test_post_id_accepts_post_and_comment_urls():
+    assert post_id_from_url("https://reddit.com/r/test/comments/abc123/a_title/") == "abc123"
+    assert post_id_from_url("https://reddit.com/r/test/comments/abc123/a_title/xyz789/") == "abc123"
 
 @pytest.mark.parametrize(
     ("url", "expected"),

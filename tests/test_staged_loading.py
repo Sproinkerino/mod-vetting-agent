@@ -19,13 +19,14 @@ def item(index: int, item_type: str = "comment", body: str | None = None) -> Red
     )
 
 
-def test_activity_preview_is_newest_comments_only_and_bounded():
-    items = [item(0, "post"), *[item(index, body="x" * 400) for index in range(1, 9)]]
+def test_activity_preview_is_newest_mixed_content_and_bounded():
+    items = [*[item(index, body="x" * 400) for index in range(1, 9)], item(9, "post", body="p" * 400)]
 
     preview = _serialize_activity_preview(items)
 
-    assert [entry["id"] for entry in preview] == ["8", "7", "6", "5", "4", "3"]
-    assert all(entry["type"] == "comment" for entry in preview)
+    assert [entry["id"] for entry in preview] == ["9", "8", "7", "6", "5", "4"]
+    assert preview[0]["type"] == "post"
+    assert preview[0]["title"] == "A post"
     assert all(len(entry["body"]) == 300 for entry in preview)
 
 

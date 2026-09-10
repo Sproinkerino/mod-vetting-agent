@@ -92,7 +92,7 @@ def _reddit_url_parts(url: str) -> list[str]:
     parsed = urlparse(url.strip())
     hostname = (parsed.hostname or "").lower()
     if parsed.scheme not in {"http", "https"} or not (hostname == "reddit.com" or hostname.endswith(".reddit.com")):
-        raise ValueError("Enter a full reddit.com comment URL")
+        raise ValueError("Enter a full reddit.com post, comment, or profile URL")
     return [part for part in parsed.path.split("/") if part]
 
 
@@ -121,6 +121,19 @@ def comment_id_from_url(url: str) -> str:
     if not comment_id.isalnum():
         raise ValueError("Could not read the Reddit comment id")
     return comment_id
+
+
+def post_id_from_url(url: str) -> str:
+    """Extract the submission id from a canonical Reddit post or comment URL."""
+    parts = _reddit_url_parts(url)
+    try:
+        comments_at = parts.index("comments")
+        post_id = parts[comments_at + 1]
+    except (ValueError, IndexError) as exc:
+        raise ValueError("URL is not a Reddit post or comment URL") from exc
+    if not post_id.isalnum():
+        raise ValueError("Could not read the Reddit post id")
+    return post_id
 
 
 def _resolve_reddit_share_url(client: httpx.Client, url: str) -> str:
@@ -152,6 +165,33 @@ def fetch_comment_from_url(url: str) -> RedditItem:
         _hydrate_submission_titles(client, [item])
     if not item.author or item.author in {"[deleted]", "AutoModerator"}:
         raise ValueError("That comment does not have an analyzable Reddit author")
+    return item
+
+
+def fetch_item_from_url(url: str) -> RedditItem:
+    """Fetch the exact public Reddit post or comment targeted by a URL."""
+    with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+        resolved = _resolve_reddit_share_url(client, url)
+        try:
+            content_id = comment_id_from_url(resolved)
+            endpoint = ARCTIC_SHIFT_COMMENT_IDS
+            item_type = "comment"
+        except ValueError as exc:
+            if "specific comment" not in str(exc):
+                raise
+            content_id = post_id_from_url(resolved)
+            endpoint = ARCTIC_SHIFT_POST_IDS
+            item_type = "post"
+        resp = client.get(endpoint, params={"ids": content_id})
+        resp.raise_for_status()
+        rows = resp.json().get("data", [])
+        if not rows:
+            raise ValueError(f"That Reddit {item_type} was not found in the public archive")
+        item = _normalize(rows[0], item_type)
+        if item_type == "comment":
+            _hydrate_submission_titles(client, [item])
+    if not item.author or item.author in {"[deleted]", "AutoModerator"}:
+        raise ValueError(f"That {item_type} does not have an analyzable Reddit author")
     return item
 
 

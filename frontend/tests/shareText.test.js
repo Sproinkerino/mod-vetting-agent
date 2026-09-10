@@ -19,3 +19,13 @@ test('builds opener, quote-source pairs, closing, and app link in paste order', 
   });
   assert.equal(text, 'You keep contradicting yourself.\n\n> first quote\n[Source](https://reddit.com/one)\n\n> second quote\n[Source](https://reddit.com/two)\n\nThat is the final comment.\n\n[reddit-pi](https://example.com)');
 });
+
+test('quotes a post title and body as one compact receipt', () => {
+  const text = buildRedditShareText({
+    sources: [{ type: 'post', title: 'Post title', body: 'Post body', permalink: 'https://reddit.com/post' }],
+    opener: 'Opening.',
+    answer: 'Closing.',
+    origin: 'https://example.com',
+  });
+  assert.match(text, /> Post title\n> Post body\n\[Source\]\(https:\/\/reddit.com\/post\)/);
+});

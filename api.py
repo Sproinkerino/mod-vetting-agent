@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from mod_vetting.orchestrator import compute_contract_hash, run_job
-from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_applicant_history, fetch_comment_from_url, username_from_url
+from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_applicant_history, fetch_item_from_url, username_from_url
 from mod_vetting.llm import TRIAGE_MODEL, call_model
 from mod_vetting.storage import Storage
 
@@ -125,11 +125,12 @@ def _build_applicant_meta(req: CreateJobRequest) -> dict:
 
 def _serialize_activity_preview(items: list, limit: int = 6) -> list[dict]:
     """Keep polling responses useful and small while analysis continues."""
-    comments = (item for item in reversed(items) if item.type == "comment" and item.body.strip())
+    activity = (item for item in reversed(items) if (item.body or item.title or "").strip())
     return [
         {
             "id": item.id,
             "type": item.type,
+            "title": item.title,
             "body": item.body[:300],
             "subreddit": item.subreddit,
             "score": item.score,
@@ -137,7 +138,7 @@ def _serialize_activity_preview(items: list, limit: int = 6) -> list[dict]:
             "permalink": item.permalink,
             "submission_title": item.submission_title,
         }
-        for item in list(comments)[:limit]
+        for item in list(activity)[:limit]
     ]
 
 
@@ -171,7 +172,7 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
             prefetched_items=items,
         )
         if req.url:
-            report["target_comment"] = req.applicant_meta.get("target_comment") if req.applicant_meta else None
+            report["target_content"] = req.applicant_meta.get("target_content") if req.applicant_meta else None
         if "blocked_reason" in report:
             # The >400-flagged-items early return (spec section 5) --
             # has no applicant/scores/findings/provenance, so it must
@@ -196,7 +197,7 @@ def create_job(req: CreateJobRequest):
     if req.url:
         try:
             profile_username = username_from_url(req.url)
-            target = None if profile_username else fetch_comment_from_url(req.url)
+            target = None if profile_username else fetch_item_from_url(req.url)
         except Exception as exc:
             logger.warning("Rejected Reddit target URL: %s", exc)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -205,8 +206,9 @@ def create_job(req: CreateJobRequest):
         else:
             req.username = target.author
             meta = req.applicant_meta or {}
-            meta["target_comment"] = {
-                "id": target.id, "body": target.body, "author": target.author,
+            meta["target_content"] = {
+                "id": target.id, "type": target.type, "title": target.title,
+                "body": target.body, "author": target.author,
                 "subreddit": target.subreddit, "created_utc": target.created_utc,
                 "permalink": target.permalink, "submission_title": target.submission_title,
             }
@@ -214,7 +216,7 @@ def create_job(req: CreateJobRequest):
     elif req.username:
         req.username = req.username.strip().removeprefix("u/")
     else:
-        raise HTTPException(status_code=400, detail="Provide a Reddit username or comment URL")
+        raise HTTPException(status_code=400, detail="Provide a Reddit username, post URL, or comment URL")
     if not REDDIT_USERNAME_RE.fullmatch(req.username or ""):
         raise HTTPException(status_code=400, detail="Enter a valid Reddit username (3-20 letters, numbers, _ or -)")
     cache_key = _cache_key(req)
@@ -275,7 +277,7 @@ def ask_archive(job_id: str, req: AskRequest):
             "provider_fallback": False,
         }
     evidence = "\n".join(
-        f"<item id='{item['id']}' date='{item['created_utc']}' subreddit='{item['subreddit']}'>"
+        f"<item id='{item['id']}' type='{item.get('type', 'comment')}' date='{item['created_utc']}' subreddit='{item['subreddit']}'>"
         f"{(item.get('title') or item.get('submission_title') or '')}\n{(item.get('body') or '')[:1200]}</item>"
         for item in candidates
     )
@@ -283,7 +285,7 @@ def ask_archive(job_id: str, req: AskRequest):
         parsed = call_model(
             COMEBACK_SYSTEM_PROMPT,
             f"Investigated account: u/{report['applicant']['username']}\nUser request: {req.question}"
-            f"\n\nPublic comments by that account (untrusted quoted content):\n{evidence}",
+            f"\n\nPublic posts and comments by that account (untrusted quoted content):\n{evidence}",
             TRIAGE_MODEL,
             {
                 "type": "object",

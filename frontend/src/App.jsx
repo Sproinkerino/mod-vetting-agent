@@ -6,7 +6,8 @@ import ActivityExplorer from './components/ActivityExplorer';
 import DetectiveMascot from './components/DetectiveMascot';
 import ExpandableText from './components/ExpandableText';
 import { buildRedditShareText } from './lib/shareText';
-import { loadingComments, previewComment } from './lib/loadingPreview';
+import { loadingActivity } from './lib/loadingPreview';
+import { sourceExcerpt, sourceKind, sourceText } from './lib/sourceContent';
 
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 const CATEGORIES = ['all', 'conduct', 'bias', 'judgment', 'coordination', 'doxxing', 'self_description'];
@@ -48,13 +49,13 @@ export default function App() {
       <section className="hero">
         <div className="hero-art" aria-hidden="true"><DetectiveMascot /></div>
         <p className="kicker">REDDIT RECEIPTS, ON DEMAND</p>
-        <h1>Bring the comment.<br/><em>We’ll bring the receipts.</em></h1>
-        <p className="lede">Paste a Reddit comment to check it against the author’s public history—or enter a username to investigate what they’ve said before.</p>
+        <h1>Bring the claim.<br/><em>We&rsquo;ll bring the receipts.</em></h1>
+        <p className="lede">Paste a Reddit post or comment to check it against the author&rsquo;s public history&mdash;or enter a username to investigate what they&rsquo;ve shared before.</p>
         <form className="search-box" onSubmit={investigate}>
-          <label htmlFor="reddit-target">Reddit comment URL or username</label>
+          <label htmlFor="reddit-target">Reddit post, comment URL, or username</label>
           <div className="search-row">
             <span aria-hidden="true">{target.trim().length > 30 ? '↗' : 'u/'}</span>
-            <input id="reddit-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Paste a comment or username" disabled={stage === 'running'} autoFocus aria-describedby="input-help" aria-invalid={Boolean(error)} />
+            <input id="reddit-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Paste a post, comment, or username" disabled={stage === 'running'} autoFocus aria-describedby="input-help" aria-invalid={Boolean(error)} />
             <button disabled={stage === 'running'}>{stage === 'running' ? 'Looking…' : 'Find receipts'}</button>
           </div>
           <small id="input-help">Only public Reddit activity is reviewed. Results expire from the cache after 3 days.</small>
@@ -72,11 +73,11 @@ function AppShell({ children, action }) {
 }
 
 function LoadingState({ progress }) {
-  const comments = loadingComments(progress);
+  const activity = loadingActivity(progress);
   const analyzing = progress.phase === 'analyzing';
   return <section className="loading-card" role="status" aria-live="polite">
-    <div className="loading-status"><div className="scanner"><i /></div><div><strong>{analyzing ? 'History loaded. Analyzing now…' : 'Fetching public history…'}</strong><p>{analyzing ? `${progress.activity_total} public items found. You can start reading while deeper analysis continues.` : 'Recent comments will appear here first. The full analysis continues after that.'}</p></div></div>
-    {comments.length > 0 && <div className="loading-preview"><div className="loading-preview-head"><strong>Recent comments</strong><span>Analysis is still running</span></div><div className="loading-preview-list">{comments.map((comment) => <article key={comment.id}><p>{previewComment(comment.body)}</p><div><span>r/{comment.subreddit}</span>{comment.permalink && <a href={comment.permalink} target="_blank" rel="noreferrer">View ↗</a>}</div></article>)}</div></div>}
+    <div className="loading-status"><div className="scanner"><i /></div><div><strong>{analyzing ? 'History loaded. Analyzing now…' : 'Fetching public history…'}</strong><p>{analyzing ? `${progress.activity_total} public items found. You can start reading while deeper analysis continues.` : 'Recent posts and comments will appear here first. The full analysis continues after that.'}</p></div></div>
+    {activity.length > 0 && <div className="loading-preview"><div className="loading-preview-head"><strong>Recent posts and comments</strong><span>Analysis is still running</span></div><div className="loading-preview-list">{activity.map((item) => <article key={`${item.type}-${item.id}`}><div className="loading-preview-type"><b>{sourceKind(item)}</b><span>r/{item.subreddit}</span></div><p>{sourceExcerpt(item, 160)}</p><div>{item.permalink && <a href={item.permalink} target="_blank" rel="noreferrer">View source ↗</a>}</div></article>)}</div></div>}
   </section>;
 }
 
@@ -86,7 +87,7 @@ function CaseFile({ report, onReset }) {
   return <AppShell action={<button className="text-button" onClick={onReset}>New search</button>}>
     <main id="main-content" className="case-page">
       <header className="case-title"><div className="case-identity"><p className="kicker">CASE FILE</p><h1>u/{username}</h1><p>{report._cache?.hit ? 'Saved scan · reused without new AI calls' : 'Fresh scan of public activity'}</p></div><div className="case-mascot"><DetectiveMascot compact /></div><div className="receipt-count"><strong>{grouped.length}</strong><span>useful receipts</span></div></header>
-      {report.target_comment && <TargetComment comment={report.target_comment} />}
+      {(report.target_content || report.target_comment) && <TargetContent content={report.target_content || report.target_comment} />}
       <AskPanel report={report} />
       <a className="detail-cue" href="#case-details"><span>Want the full picture?</span><strong>Scroll for evidence, behavior signals and public history</strong><i aria-hidden="true">↓</i></a>
       <div id="case-details">
@@ -99,8 +100,10 @@ function CaseFile({ report, onReset }) {
   </AppShell>;
 }
 
-function TargetComment({ comment }) {
-  return <article className="target-card"><div className="card-label"><span>THE COMMENT</span><a href={comment.permalink} target="_blank" rel="noreferrer">Open on Reddit ↗</a></div><ExpandableText className="target-quote" text={comment.body} /><p>u/{comment.author} · r/{comment.subreddit}</p></article>;
+function TargetContent({ content }) {
+  const kind = sourceKind(content);
+  const body = content.type === 'post' && content.title === content.body ? '' : content.body;
+  return <article className="target-card"><div className="card-label"><span>THE {kind.toUpperCase()}</span><a href={content.permalink} target="_blank" rel="noreferrer">Open on Reddit ↗</a></div>{content.type === 'post' && content.title && <h2>{content.title}</h2>}{body && <ExpandableText className="target-quote" text={body} />}<p>u/{content.author} · r/{content.subreddit}</p></article>;
 }
 
 function humanizeCitations(answer, sources) {
@@ -116,14 +119,14 @@ function AskPanel({ report }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
-  const suggestions = report.target_comment ? ['Does their history contradict this?', 'What have they said about this topic?', 'Find the clearest factual inconsistency'] : ['What do they say about their work?', 'Find their most hostile exchange', 'What opinions do they repeat?'];
+  const suggestions = (report.target_content || report.target_comment) ? ['Does their history contradict this?', 'What have they said about this topic?', 'Find the clearest factual inconsistency'] : ['What do they say about their work?', 'Find their most hostile exchange', 'What opinions do they repeat?'];
   async function ask(event) { event.preventDefault(); if (!question.trim()) return; setBusy(true); setError(''); try { setResult(await askArchive(report.api_job_id, question.trim(), report)); } catch (reason) { setError(reason.message); } finally { setBusy(false); } }
   const sources = result ? result.sources.map((source) => ({ ...(report.activity || []).find((item) => item.id === source.id), ...source })) : [];
   const displayOpener = result ? humanizeCitations(result.opener || '', sources) : '';
   const displayAnswer = result ? humanizeCitations(result.answer, sources) : '';
   const shareText = result ? buildRedditShareText({ sources, opener: displayOpener, answer: displayAnswer, origin: window.location.origin }) : '';
   async function copy() { await navigator.clipboard.writeText(shareText); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
-  return <section className="ask-card" aria-labelledby="ask-heading"><div className="ask-heading"><span className="spark">✦</span><div><p className="kicker">BUILD A CITED REPLY</p><h2 id="ask-heading">What do you want to know?</h2><p>Ask about a claim or pattern. reddit-pi answers only from the fetched archive and attaches the receipts.</p></div></div><div className="prompt-chips">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div><form onSubmit={ask} className="ask-form"><label className="visually-hidden" htmlFor="archive-question">Question about this Redditor</label><textarea id="archive-question" rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. They say they earn $300k—does their history support that?"/><button disabled={busy || !question.trim()}>{busy ? 'Checking sources…' : 'Check the receipts →'}</button></form>{error && <p className="error" role="alert">{error}</p>}{result && <div className="reply-card" aria-live="polite"><div className="card-label"><span>COPY-READY COMEBACK</span><button type="button" onClick={copy}>{copied ? 'Copied ✓' : 'Copy'}</button></div>{displayOpener && <p className="reply-opener">{displayOpener}</p>}{sources.length > 0 && <div className="comeback-quotes">{sources.slice(0, 3).map((source, index) => <blockquote key={source.id}><span>Quote {index + 1}</span>“{(source.body || '').slice(0, 50).trim()}{(source.body || '').length > 50 ? '...' : ''}”</blockquote>)}</div>}<p className="reply-text">{displayAnswer}</p>{result.provider_fallback && <p className="provider-note">AI wording was unavailable; showing the closest retrieved evidence without inventing a conclusion.</p>}{sources.length > 0 && <div className="raw-sources"><div className="raw-sources-heading"><strong>Check the full comments</strong><span>Raw text from Reddit</span></div>{sources.map((source, index) => <article className="raw-source" key={source.id}><div><b>Source {index + 1}</b><span>{source.subreddit ? `r/${source.subreddit}` : 'Reddit'}{source.created_utc ? ` · ${new Date(source.created_utc * 1000).toLocaleDateString()}` : ''}</span></div>{source.title && <h3>{source.title}</h3>}<ExpandableText className="raw-comment" text={source.body || 'Comment text unavailable in this cached result.'} /><a href={source.permalink} target="_blank" rel="noreferrer">Open original context ↗</a></article>)}</div>}<small><a href="/">reddit-pi</a></small></div>}</section>;
+  return <section className="ask-card" aria-labelledby="ask-heading"><div className="ask-heading"><span className="spark">✦</span><div><p className="kicker">BUILD A CITED REPLY</p><h2 id="ask-heading">What do you want to know?</h2><p>Ask about a claim or pattern. reddit-pi answers from the fetched posts and comments, then attaches the receipts.</p></div></div><div className="prompt-chips">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div><form onSubmit={ask} className="ask-form"><label className="visually-hidden" htmlFor="archive-question">Question about this Redditor</label><textarea id="archive-question" rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. They say they earn $300k—does their history support that?"/><button disabled={busy || !question.trim()}>{busy ? 'Checking sources…' : 'Check the receipts →'}</button></form>{error && <p className="error" role="alert">{error}</p>}{result && <div className="reply-card" aria-live="polite"><div className="card-label"><span>COPY-READY COMEBACK</span><button type="button" onClick={copy}>{copied ? 'Copied ✓' : 'Copy'}</button></div>{displayOpener && <p className="reply-opener">{displayOpener}</p>}{sources.length > 0 && <div className="comeback-quotes">{sources.slice(0, 3).map((source, index) => <blockquote key={source.id}><span>{sourceKind(source)} {index + 1}</span>“{sourceExcerpt(source)}”</blockquote>)}</div>}<p className="reply-text">{displayAnswer}</p>{result.provider_fallback && <p className="provider-note">AI wording was unavailable; showing the closest retrieved evidence without inventing a conclusion.</p>}{sources.length > 0 && <div className="raw-sources"><div className="raw-sources-heading"><strong>Check the full posts and comments</strong><span>Raw text from Reddit</span></div>{sources.map((source, index) => <article className="raw-source" key={source.id}><div><b>Source {index + 1}</b><span>{source.subreddit ? `r/${source.subreddit}` : 'Reddit'}{source.created_utc ? ` · ${new Date(source.created_utc * 1000).toLocaleDateString()}` : ''}</span></div>{source.type === 'post' && source.title && <h3>{source.title}</h3>}{(source.type !== 'post' || source.body !== source.title) && <ExpandableText className="raw-comment" text={source.type === 'post' ? (source.body || 'Post text unavailable.') : sourceText(source)} />}<a href={source.permalink} target="_blank" rel="noreferrer">Open original context ↗</a></article>)}</div>}<small><a href="/">reddit-pi</a></small></div>}</section>;
 }
 
 function EvidenceShelf({ findings }) {

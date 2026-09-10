@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadingComments, previewComment } from '../src/lib/loadingPreview.js';
+import { loadingActivity } from '../src/lib/loadingPreview.js';
 
-test('shows only bounded comments while analysis runs', () => {
+test('shows a bounded mixture of posts and comments while analysis runs', () => {
   const activity_preview = [
-    { id: 'post', type: 'post', body: 'title' },
+    { id: 'post', type: 'post', title: 'A post', body: 'Post body' },
     ...Array.from({ length: 8 }, (_, index) => ({ id: String(index), type: 'comment', body: `comment ${index}` })),
   ];
-  assert.deepEqual(loadingComments({ activity_preview }).map((item) => item.id), ['0', '1', '2', '3', '4', '5']);
+  assert.deepEqual(loadingActivity({ activity_preview }).map((item) => item.id), ['post', '0', '1', '2', '3', '4']);
 });
 
-test('creates a compact readable loading preview', () => {
-  assert.equal(previewComment(`  ${'a'.repeat(165)}  `), `${'a'.repeat(160)}…`);
+test('drops unsupported or empty activity entries', () => {
+  assert.deepEqual(loadingActivity({ activity_preview: [{ type: 'post', title: 'Kept' }, { type: 'post' }, { type: 'message', body: 'Dropped' }] }), [{ type: 'post', title: 'Kept' }]);
 });

@@ -95,3 +95,40 @@ def test_no_matching_activity_uses_the_same_reply_shape():
         "sources": [],
         "provider_fallback": False,
     }
+
+
+def test_ask_uses_posts_as_first_class_sources(monkeypatch):
+    captured = {}
+
+    def reply_model(system_prompt, user_prompt, model, schema, **kwargs):
+        captured["user_prompt"] = user_prompt
+        return {"opener": "That post says otherwise.", "answer": "The post is the receipt.", "source_ids": ["post123"]}
+
+    monkeypatch.setattr(api_module, "call_model", reply_model)
+    activity = [{
+        "id": "post123", "type": "post", "title": "My coffee setup", "body": "I drink coffee every morning.",
+        "subreddit": "coffee", "created_utc": 1_700_000_000,
+        "permalink": "https://reddit.com/r/coffee/comments/post123/my_coffee_setup/",
+    }]
+    response = TestClient(api_module.app).post(
+        "/jobs/post-source/ask",
+        json={"question": "What did they say about coffee?", "username": "example", "activity": activity},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sources"][0]["type"] == "post"
+    assert response.json()["sources"][0]["title"] == "My coffee setup"
+    assert "type='post'" in captured["user_prompt"]
+    assert "Public posts and comments" in captured["user_prompt"]
+
+
+def test_post_url_metadata_keeps_required_applicant_fields():
+    request = api_module.CreateJobRequest(
+        username="example", url="https://reddit.com/r/test/comments/post123/a_post/",
+        rules="No harassment.", register_notes="Read literally.",
+        applicant_meta={"target_content": {"id": "post123", "type": "post", "title": "A post"}},
+    )
+    meta = api_module._build_applicant_meta(request)
+
+    assert meta["username"] == "example"
+    assert meta["target_content"]["type"] == "post"
