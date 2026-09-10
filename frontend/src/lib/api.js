@@ -15,7 +15,7 @@ const DEFAULT_RULES =
 const DEFAULT_REGISTER_NOTES = 'No subreddit-specific house style provided -- read literally.';
 
 export async function startJob(target) {
-  const isUrl = target.length > 30;
+  const isUrl = /^https?:\/\//i.test(target);
   const res = await fetch(`${API_BASE}/jobs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -25,7 +25,10 @@ export async function startJob(target) {
       register_notes: DEFAULT_REGISTER_NOTES,
     }),
   });
-  if (!res.ok) throw new Error(`Failed to start job (${res.status})`);
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || `Failed to start job (${res.status})`);
+  }
   return res.json(); // { job_id, status }
 }
 

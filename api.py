@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from mod_vetting.orchestrator import compute_contract_hash, run_job
-from mod_vetting.fetch import fetch_comment_from_url
+from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_comment_from_url, username_from_url
 from mod_vetting.llm import TRIAGE_MODEL, call_model
 from mod_vetting.storage import Storage
 
@@ -138,21 +138,28 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
 def create_job(req: CreateJobRequest):
     if req.url:
         try:
-            target = fetch_comment_from_url(req.url)
+            profile_username = username_from_url(req.url)
+            target = None if profile_username else fetch_comment_from_url(req.url)
         except Exception as exc:
+            logger.warning("Rejected Reddit target URL: %s", exc)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        req.username = target.author
-        meta = req.applicant_meta or {}
-        meta["target_comment"] = {
-            "id": target.id, "body": target.body, "author": target.author,
-            "subreddit": target.subreddit, "created_utc": target.created_utc,
-            "permalink": target.permalink, "submission_title": target.submission_title,
-        }
-        req.applicant_meta = meta
+        if profile_username:
+            req.username = profile_username
+        else:
+            req.username = target.author
+            meta = req.applicant_meta or {}
+            meta["target_comment"] = {
+                "id": target.id, "body": target.body, "author": target.author,
+                "subreddit": target.subreddit, "created_utc": target.created_utc,
+                "permalink": target.permalink, "submission_title": target.submission_title,
+            }
+            req.applicant_meta = meta
     elif req.username:
         req.username = req.username.strip().removeprefix("u/")
     else:
         raise HTTPException(status_code=400, detail="Provide a Reddit username or comment URL")
+    if not REDDIT_USERNAME_RE.fullmatch(req.username or ""):
+        raise HTTPException(status_code=400, detail="Enter a valid Reddit username (3-20 letters, numbers, _ or -)")
     cache_key = _cache_key(req)
     job_id = str(uuid.uuid4())
     cached = Storage(DB_PATH).get_cached_report(cache_key, CACHE_TTL_SECONDS)

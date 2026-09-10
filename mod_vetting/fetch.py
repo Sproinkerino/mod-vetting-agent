@@ -25,6 +25,7 @@ keeps off the triage hot path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from urllib.parse import urlparse
 
 import httpx
@@ -41,7 +42,7 @@ REQUEST_TIMEOUT = 15.0
 # is a window, not the full downstream thread -- see the spec's note on
 # subsequent_replies being bounded, and j3/j4/d3 answering null past its edge.
 REPLY_DEPTH = 2
-
+REDDIT_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,20}$")
 
 class ThreadContextUnavailable(Exception):
     """Raised when thread context genuinely could not be fetched (network,
@@ -87,12 +88,28 @@ def _normalize(raw: dict, item_type: str) -> RedditItem:
     )
 
 
+def _reddit_url_parts(url: str) -> list[str]:
+    parsed = urlparse(url.strip())
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in {"http", "https"} or not (hostname == "reddit.com" or hostname.endswith(".reddit.com")):
+        raise ValueError("Enter a full reddit.com comment URL")
+    return [part for part in parsed.path.split("/") if part]
+
+
+def username_from_url(url: str) -> str | None:
+    """Return the username in a Reddit profile URL, or None for another Reddit URL."""
+    parts = _reddit_url_parts(url)
+    if len(parts) < 2 or parts[0].lower() not in {"u", "user"}:
+        return None
+    username = parts[1]
+    if not REDDIT_USERNAME_RE.fullmatch(username):
+        raise ValueError("That Reddit profile URL does not contain a valid username")
+    return username
+
+
 def comment_id_from_url(url: str) -> str:
     """Extract the comment id from a canonical Reddit URL."""
-    parsed = urlparse(url.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.hostname.lower().endswith("reddit.com"):
-        raise ValueError("Enter a full reddit.com comment URL")
-    parts = [part for part in parsed.path.split("/") if part]
+    parts = _reddit_url_parts(url)
     try:
         comments_at = parts.index("comments")
     except ValueError as exc:

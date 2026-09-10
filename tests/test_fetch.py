@@ -8,7 +8,7 @@ top-level comment silently looked like "no replies," not an error.
 
 import pytest
 
-from mod_vetting.fetch import _flatten_tree, comment_id_from_url
+from mod_vetting.fetch import _flatten_tree, comment_id_from_url, username_from_url
 
 
 def test_comment_id_from_canonical_reddit_url():
@@ -20,6 +20,22 @@ def test_comment_id_rejects_post_only_and_non_reddit_urls():
         comment_id_from_url("https://www.reddit.com/r/test/comments/abc123/a_title/")
     with pytest.raises(ValueError, match="reddit.com"):
         comment_id_from_url("https://example.com/r/test/comments/abc/title/xyz")
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://www.reddit.com/user/Some_User/", "Some_User"),
+        ("https://reddit.com/u/another-user", "another-user"),
+    ],
+)
+def test_username_from_reddit_profile_url(url, expected):
+    assert username_from_url(url) == expected
+
+
+def test_username_from_url_ignores_comment_urls_and_rejects_lookalike_hosts():
+    assert username_from_url("https://www.reddit.com/r/test/comments/abc/a_title/xyz/") is None
+    with pytest.raises(ValueError, match="reddit.com"):
+        username_from_url("https://notreddit.com/user/someone")
 
 
 def _listing(children):
