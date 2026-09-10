@@ -6,6 +6,7 @@ import ActivityExplorer from './components/ActivityExplorer';
 import DetectiveMascot from './components/DetectiveMascot';
 import ExpandableText from './components/ExpandableText';
 import { buildRedditShareText } from './lib/shareText';
+import { loadingComments, previewComment } from './lib/loadingPreview';
 
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 const CATEGORIES = ['all', 'conduct', 'bias', 'judgment', 'coordination', 'doxxing', 'self_description'];
@@ -16,6 +17,7 @@ export default function App() {
   const [stage, setStage] = useState('idle');
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState({ phase: 'fetching', activity_preview: [], activity_total: 0 });
 
   async function investigate(event) {
     event.preventDefault();
@@ -26,10 +28,10 @@ export default function App() {
       setError('Enter a Reddit username or a full reddit.com comment URL.');
       return;
     }
-    setStage('running'); setError('');
+    setStage('running'); setError(''); setProgress({ phase: 'fetching', activity_preview: [], activity_total: 0 });
     try {
       const { job_id } = await startJob(normalized);
-      const result = await waitForJob(job_id);
+      const result = await waitForJob(job_id, { onTick: setProgress });
       if (result.status === 'error') throw new Error(result.error || 'Investigation failed.');
       setReport({ ...result.report, api_job_id: job_id });
       setStage('done');
@@ -57,7 +59,7 @@ export default function App() {
           </div>
           <small id="input-help">Only public Reddit activity is reviewed. Results expire from the cache after 3 days.</small>
         </form>
-        {stage === 'running' && <LoadingState />}
+        {stage === 'running' && <LoadingState progress={progress} />}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="trust-row" aria-label="Product principles"><span>✓ Exact quotes</span><span>✓ Direct source links</span><span>✓ No invented claims</span></div>
       </section>
@@ -69,8 +71,13 @@ function AppShell({ children, action }) {
   return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a><header className="topbar"><a className="logo" href="/" aria-label="reddit-pi home"><span>🔥</span> reddit<span>-pi</span></a><p>Receipts before replies.</p>{action}</header>{children}</div>;
 }
 
-function LoadingState() {
-  return <section className="loading-card" role="status" aria-live="polite"><div className="scanner"><i /></div><div><strong>Checking public history</strong><p>Collecting activity, then verifying useful quotes against their original context. This can take a minute.</p></div></section>;
+function LoadingState({ progress }) {
+  const comments = loadingComments(progress);
+  const analyzing = progress.phase === 'analyzing';
+  return <section className="loading-card" role="status" aria-live="polite">
+    <div className="loading-status"><div className="scanner"><i /></div><div><strong>{analyzing ? 'History loaded. Analyzing now…' : 'Fetching public history…'}</strong><p>{analyzing ? `${progress.activity_total} public items found. You can start reading while deeper analysis continues.` : 'Recent comments will appear here first. The full analysis continues after that.'}</p></div></div>
+    {comments.length > 0 && <div className="loading-preview"><div className="loading-preview-head"><strong>Recent comments</strong><span>Analysis is still running</span></div><div className="loading-preview-list">{comments.map((comment) => <article key={comment.id}><p>{previewComment(comment.body)}</p><div><span>r/{comment.subreddit}</span>{comment.permalink && <a href={comment.permalink} target="_blank" rel="noreferrer">View ↗</a>}</div></article>)}</div></div>}
+  </section>;
 }
 
 function CaseFile({ report, onReset }) {

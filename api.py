@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from mod_vetting.orchestrator import compute_contract_hash, run_job
-from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_comment_from_url, username_from_url
+from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_applicant_history, fetch_comment_from_url, username_from_url
 from mod_vetting.llm import TRIAGE_MODEL, call_model
 from mod_vetting.storage import Storage
 
@@ -123,6 +123,24 @@ def _build_applicant_meta(req: CreateJobRequest) -> dict:
     return meta
 
 
+def _serialize_activity_preview(items: list, limit: int = 6) -> list[dict]:
+    """Keep polling responses useful and small while analysis continues."""
+    comments = (item for item in reversed(items) if item.type == "comment" and item.body.strip())
+    return [
+        {
+            "id": item.id,
+            "type": item.type,
+            "body": item.body[:300],
+            "subreddit": item.subreddit,
+            "score": item.score,
+            "created_utc": item.created_utc,
+            "permalink": item.permalink,
+            "submission_title": item.submission_title,
+        }
+        for item in list(comments)[:limit]
+    ]
+
+
 def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
     try:
         # sqlite3 connections are thread-affine (check_same_thread=True by
@@ -131,6 +149,17 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
         # one here rather than sharing the module-level connection.
         storage = Storage(DB_PATH)
         applicant_meta = _build_applicant_meta(req)
+        items = fetch_applicant_history(
+            req.username, comment_cap=req.comment_cap, post_cap=req.post_cap
+        )
+        _jobs[job_id] = {
+            "status": "running",
+            "phase": "analyzing",
+            "activity_preview": _serialize_activity_preview(items),
+            "activity_total": len(items),
+            "report": None,
+            "error": None,
+        }
         report = run_job(
             storage=storage,
             applicant_username=req.username,
@@ -139,6 +168,7 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
             applicant_meta=applicant_meta,
             comment_cap=req.comment_cap,
             post_cap=req.post_cap,
+            prefetched_items=items,
         )
         if req.url:
             report["target_comment"] = req.applicant_meta.get("target_comment") if req.applicant_meta else None
@@ -195,7 +225,10 @@ def create_job(req: CreateJobRequest):
         report["_cache"] = {"hit": True, "age_seconds": round(age), "ttl_seconds": CACHE_TTL_SECONDS}
         _jobs[job_id] = {"status": "done", "report": report, "error": None, "cached": True}
         return {"job_id": job_id, "status": "done", "cached": True}
-    _jobs[job_id] = {"status": "running", "report": None, "error": None}
+    _jobs[job_id] = {
+        "status": "running", "phase": "fetching", "activity_preview": [],
+        "activity_total": 0, "report": None, "error": None,
+    }
     thread = threading.Thread(target=_run_in_background, args=(job_id, req, cache_key), daemon=True)
     thread.start()
     return {"job_id": job_id, "status": "running"}

@@ -46,6 +46,7 @@ def run_job(
     comment_cap: int = 1000,
     post_cap: int = 100,
     api_key: str | None = None,
+    prefetched_items: list | None = None,
 ) -> dict:
     """Runs one applicant end to end. Not resumable mid-call in this v1 --
     checkpoints are written after each stage so a *new* run of the same
@@ -64,7 +65,9 @@ def run_job(
 
     # --- fetching ---
     storage.set_state(job.job_id, "fetching")
-    items = fetch_applicant_history(applicant_username, comment_cap=comment_cap, post_cap=post_cap)
+    items = prefetched_items if prefetched_items is not None else fetch_applicant_history(
+        applicant_username, comment_cap=comment_cap, post_cap=post_cap
+    )
     comments = [i for i in items if i.type == "comment"]
     storage.checkpoint_stage(job.job_id, "fetching", {"comment_count": len(comments), "item_count": len(items)})
 
