@@ -115,7 +115,7 @@ def _call_openrouter(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "http://127.0.0.1:5173",
-            "X-Title": "Reddit Detective Local",
+            "X-Title": "reddit-pi",
         },
         json={
             "model": routed_model,

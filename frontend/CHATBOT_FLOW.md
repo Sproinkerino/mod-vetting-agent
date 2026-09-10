@@ -1,6 +1,6 @@
 # Evidence Assistant Flow
 
-RoastReel uses a structured, guided conversation over the fetched Reddit archive. It is not an open-domain chatbot.
+reddit-pi uses a structured, guided conversation over the fetched Reddit archive. It is not an open-domain chatbot.
 
 ## Supported intents
 

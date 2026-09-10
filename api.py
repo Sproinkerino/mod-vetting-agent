@@ -35,7 +35,7 @@ from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_comment_from_url, userna
 from mod_vetting.llm import TRIAGE_MODEL, call_model
 from mod_vetting.storage import Storage
 
-app = FastAPI(title="mod-vetting-agent API")
+app = FastAPI(title="reddit-pi API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # read-only-ish evidence API; tighten if this ever holds real applicant data long-term

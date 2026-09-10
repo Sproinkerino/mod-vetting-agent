@@ -1,14 +1,14 @@
-# RoastReel Brief
+# reddit-pi Brief
 
 ## Project
 
-**Name:** RoastReel
+**Name:** reddit-pi
 
 **Description:** A mobile-first Reddit research tool that turns a comment URL or username into compact, source-linked evidence and copy-ready factual rebuttals. It serves people who want to challenge a public claim without inventing details or losing the original context.
 
 **Target audience:** Reddit readers and participants who want fast receipts before replying.
 
-**Business goal:** Make the cited result useful and shareable enough that each copied claim check introduces another person to RoastReel.
+**Business goal:** Make the cited result useful and shareable enough that each copied claim check introduces another person to reddit-pi.
 
 ## The four axes
 
@@ -22,7 +22,7 @@ Dense navy surfaces, hot orange, ultraviolet accents, and expressive type create
 
 ### Audience Relationship: Capable sidekick
 
-RoastReel hands the user receipts and context; it does not pretend to be judge, moderator, or moral authority.
+reddit-pi hands the user receipts and context; it does not pretend to be judge, moderator, or moral authority.
 
 ### Sensory Ambition: Resonant
 
@@ -34,7 +34,7 @@ This brief produces a compact evidence product, not an admin dashboard. The targ
 
 ## Inspiration references
 
-- **Downloaded RoastReel handoff** — establishes the navy, orange, purple, mobile shell, and comeback-first hierarchy.
+- **Downloaded reddit-pi handoff** — establishes the navy, orange, purple, mobile shell, and comeback-first hierarchy.
 - **hdb-engine** — calibrates dense information presentation and purposeful animated atmosphere.
 
 ## Rejection list

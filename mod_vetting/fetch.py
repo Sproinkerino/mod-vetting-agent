@@ -129,7 +129,7 @@ def _resolve_reddit_share_url(client: httpx.Client, url: str) -> str:
     is_share_link = len(parts) >= 4 and parts[0].lower() == "r" and parts[2].lower() == "s"
     if not is_share_link:
         return url
-    response = client.get(url, follow_redirects=False, headers={"User-Agent": "RoastReel/1.0"})
+    response = client.get(url, follow_redirects=False, headers={"User-Agent": "reddit-pi/1.0"})
     if response.status_code not in {301, 302, 303, 307, 308}:
         raise ValueError(f"Reddit share link could not be resolved ({response.status_code})")
     location = response.headers.get("location")
