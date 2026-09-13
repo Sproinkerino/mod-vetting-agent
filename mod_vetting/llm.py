@@ -1,4 +1,4 @@
-"""Anthropic API wrapper.
+"""Structured LLM provider adapters for Anthropic, OpenRouter, and DeepSeek.
 
 Originally used the assistant-message-prefill trick ('{' as the last
 message) to force bare JSON, verified working for claude-haiku-4-5 in the
@@ -25,16 +25,37 @@ ADJUDICATE_MODEL = "claude-sonnet-5"
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 REQUEST_TIMEOUT = 60.0
 
 TOOL_NAME = "emit_result"
 
 
+def configured_models() -> dict[str, str]:
+    """Return the provider/model contract used for cache identity and reports."""
+    provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if provider == "deepseek":
+        return {
+            "provider": "deepseek",
+            "triage": os.environ.get("DEEPSEEK_TRIAGE_MODEL", "deepseek-v4-flash"),
+            "adjudicate": os.environ.get("DEEPSEEK_ADJUDICATE_MODEL", "deepseek-v4-pro"),
+        }
+    if provider == "openrouter" or (not provider and not anthropic_key and openrouter_key):
+        return {
+            "provider": "openrouter",
+            "triage": os.environ.get("OPENROUTER_TRIAGE_MODEL", "anthropic/claude-haiku-4.5"),
+            "adjudicate": os.environ.get("OPENROUTER_ADJUDICATE_MODEL", "anthropic/claude-sonnet-5"),
+        }
+    return {"provider": "anthropic", "triage": TRIAGE_MODEL, "adjudicate": ADJUDICATE_MODEL}
+
+
 class SchemaValidationError(Exception):
     """Model output didn't match the expected shape (raised by the
-    stage-specific validators, not this module -- this module only
-    guarantees the response is well-formed JSON matching the tool's
-    input_schema at the API level; semantic checks like 'ids must be from
+    stage-specific validators, not this module -- this module guarantees
+    only that provider tool arguments decode to an object; semantic checks
+    like 'ids must be from
     this batch' happen in stage1_triage.py / stage2_adjudicate.py).
     Caller retries once with this appended to the user turn per the
     spec's retry policy (section 5); a second failure marks the item
@@ -51,6 +72,14 @@ def call_model(
 ) -> dict:
     provider = os.environ.get("LLM_PROVIDER", "").strip().lower()
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+    if provider == "deepseek":
+        if not deepseek_key:
+            raise RuntimeError("LLM_PROVIDER is deepseek but DEEPSEEK_API_KEY is not set")
+        return _call_deepseek(
+            system_prompt, user_prompt, model, input_schema,
+            max_tokens=max_tokens, api_key=deepseek_key,
+        )
     if provider == "openrouter":
         if not openrouter_key:
             raise RuntimeError("LLM_PROVIDER is openrouter but OPENROUTER_API_KEY is not set")
@@ -155,4 +184,55 @@ def _call_openrouter(
         raise SchemaValidationError("OpenRouter returned malformed tool arguments") from exc
     if not isinstance(parsed, dict):
         raise SchemaValidationError("OpenRouter tool arguments were not an object")
+    return parsed
+
+
+def _call_deepseek(
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    input_schema: dict,
+    *,
+    max_tokens: int,
+    api_key: str,
+) -> dict:
+    """Call DeepSeek's OpenAI-compatible tool API in non-thinking mode."""
+    default_model = "deepseek-v4-flash" if model == TRIAGE_MODEL else "deepseek-v4-pro"
+    model_env = "DEEPSEEK_TRIAGE_MODEL" if model == TRIAGE_MODEL else "DEEPSEEK_ADJUDICATE_MODEL"
+    routed_model = os.environ.get(model_env, default_model)
+    resp = httpx.post(
+        DEEPSEEK_URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": routed_model,
+            "max_tokens": max_tokens,
+            "thinking": {"type": "disabled"},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": TOOL_NAME,
+                    "description": "Return the result in the required shape.",
+                    "parameters": input_schema,
+                },
+            }],
+            "tool_choice": {"type": "function", "function": {"name": TOOL_NAME}},
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    calls = data.get("choices", [{}])[0].get("message", {}).get("tool_calls", [])
+    if not calls:
+        raise SchemaValidationError(f"no tool call in DeepSeek response: {data.get('choices')!r}")
+    arguments = calls[0].get("function", {}).get("arguments")
+    try:
+        parsed = json.loads(arguments) if isinstance(arguments, str) else arguments
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise SchemaValidationError("DeepSeek returned malformed tool arguments") from exc
+    if not isinstance(parsed, dict):
+        raise SchemaValidationError("DeepSeek tool arguments were not an object")
     return parsed

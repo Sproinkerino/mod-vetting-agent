@@ -19,6 +19,7 @@ import time
 from . import prompts
 from .fetch import fetch_applicant_history
 from .grounding import CorpusItem, ground
+from .llm import configured_models
 from .report import assemble_report
 from .stage1_triage import chunk, flag_rate, triage_batch
 from .stage2_adjudicate import HARD_FAIL_PENDING_REVIEW_THRESHOLD, adjudicate_flagged
@@ -34,6 +35,8 @@ def compute_contract_hash() -> str:
     h.update(prompts.TRIAGE_SYSTEM_PROMPT.encode())
     h.update(prompts.ADJUDICATE_SYSTEM_PROMPT.encode())
     h.update(RUBRIC_VERSION.encode())
+    for key, value in sorted(configured_models().items()):
+        h.update(f"{key}={value}".encode())
     return h.hexdigest()[:16]
 
 
@@ -60,7 +63,7 @@ def run_job(
     contract = {
         "rubric_version": RUBRIC_VERSION,
         "prompt_template_hash": contract_hash,
-        "models": {"triage": "claude-haiku-4-5-20251001", "adjudicate": "claude-sonnet-5"},
+        "models": configured_models(),
     }
 
     # --- fetching ---
