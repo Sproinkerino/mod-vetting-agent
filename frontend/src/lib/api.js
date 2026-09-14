@@ -14,7 +14,7 @@ const DEFAULT_RULES =
   'Spam or repeated self-promotion. Doxxing or sharing private information. Ban evasion.';
 const DEFAULT_REGISTER_NOTES = 'No subreddit-specific house style provided -- read literally.';
 
-export async function startJob(target) {
+export async function startJob(target, subreddits = []) {
   const isUrl = /^https?:\/\//i.test(target);
   const res = await fetch(`${API_BASE}/jobs`, {
     method: 'POST',
@@ -23,6 +23,7 @@ export async function startJob(target) {
       ...(isUrl ? { url: target } : { username: target }),
       rules: DEFAULT_RULES,
       register_notes: DEFAULT_REGISTER_NOTES,
+      subreddits,
     }),
   });
   if (!res.ok) {
@@ -38,7 +39,7 @@ export async function pollJob(jobId) {
   return res.json(); // { status, report, error }
 }
 
-export async function askArchive(jobId, question, report, sourceCount = 1) {
+export async function askArchive(jobId, question, report, sourceCount = 1, subreddits = []) {
   const res = await fetch(`${API_BASE}/jobs/${jobId}/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -47,6 +48,7 @@ export async function askArchive(jobId, question, report, sourceCount = 1) {
       username: report?.applicant?.username,
       activity: report?.activity || [],
       source_count: sourceCount,
+      subreddits,
     }),
   });
   if (!res.ok) {
@@ -68,4 +70,18 @@ export async function waitForJob(jobId, { intervalMs = 4000, timeoutMs = 6 * 60 
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error('Timed out waiting for the report (6 minutes).');
+}
+async function subredditRequest(path) {
+  const res = await fetch(API_BASE + path);
+  if (!res.ok) throw new Error('Could not load communities (' + res.status + ')');
+  const payload = await res.json();
+  return payload.items || [];
+}
+
+export function fetchPopularSubreddits() {
+  return subredditRequest('/subreddits/popular');
+}
+
+export function suggestSubreddits(query) {
+  return subredditRequest('/subreddits/suggest?q=' + encodeURIComponent(query));
 }
