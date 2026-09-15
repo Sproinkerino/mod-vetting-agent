@@ -44,23 +44,27 @@ def test_filter_by_subreddits_is_case_insensitive():
     assert [item["id"] for item in api_module._filter_by_subreddits(activity, ["singapore"])] == ["sg1"]
 
 
-def test_bundled_popular_list_keeps_curated_order():
-    names = [item["name"] for item in api_module._fallback_subreddit_options()]
-
-    assert names[:4] == ["AskReddit", "worldnews", "news", "funny"]
-
-
-def test_bundled_autocomplete_includes_expected_c_communities(monkeypatch):
-    monkeypatch.setattr(api_module, "_fetch_subreddit_options", lambda *args, **kwargs: [])
-    with api_module._subreddit_cache_lock:
-        api_module._subreddit_cache["suggestions"].clear()
-
-    response = TestClient(api_module.app).get("/subreddits/suggest?q=c")
+def test_bundled_popular_list_contains_one_thousand_searchable_communities():
+    response = TestClient(api_module.app).get("/subreddits/popular?limit=1000")
 
     assert response.status_code == 200
+    assert response.json()["source"] == "bundled"
+    names = [item["name"] for item in response.json()["items"]]
+    assert len(names) == 1000
+    assert names[:4] == ["funny", "AskReddit", "worldnews", "gaming"]
+    assert "singapore" in names
+    assert "masterduel" in names
+
+
+def test_bundled_autocomplete_works_without_reddit_network(monkeypatch):
+    monkeypatch.setattr(api_module, "_fetch_subreddit_options", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("network called")))
+
+    response = TestClient(api_module.app).get("/subreddits/suggest?q=master")
+
+    assert response.status_code == 200
+    assert response.json()["source"] == "bundled"
     names = {item["name"] for item in response.json()["items"]}
-    assert "comics" in names
-    assert "CompetitiveHS" in names
+    assert "masterduel" in names
 
 
 def test_ask_scope_never_sends_other_communities_to_llm(monkeypatch):

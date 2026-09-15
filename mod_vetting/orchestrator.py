@@ -17,6 +17,7 @@ import hashlib
 import time
 
 from . import prompts
+from .cancellation import ensure_not_cancelled
 from .fetch import fetch_applicant_history
 from .grounding import CorpusItem, ground
 from .llm import configured_models
@@ -50,6 +51,7 @@ def run_job(
     post_cap: int = 100,
     api_key: str | None = None,
     prefetched_items: list | None = None,
+    should_cancel=None,
 ) -> dict:
     """Runs one applicant end to end. Not resumable mid-call in this v1 --
     checkpoints are written after each stage so a *new* run of the same
@@ -67,10 +69,12 @@ def run_job(
     }
 
     # --- fetching ---
+    ensure_not_cancelled(should_cancel)
     storage.set_state(job.job_id, "fetching")
     items = prefetched_items if prefetched_items is not None else fetch_applicant_history(
         applicant_username, comment_cap=comment_cap, post_cap=post_cap
     )
+    ensure_not_cancelled(should_cancel)
     comments = [i for i in items if i.type == "comment"]
     storage.checkpoint_stage(job.job_id, "fetching", {"comment_count": len(comments), "item_count": len(items)})
 
@@ -78,7 +82,9 @@ def run_job(
     storage.set_state(job.job_id, "triaging")
     triage_results = []
     for i, batch in enumerate(chunk(comments)):
+        ensure_not_cancelled(should_cancel)
         triage_results.extend(triage_batch(batch, batch_id=f"{job.job_id}-{i}", api_key=api_key))
+    ensure_not_cancelled(should_cancel)
     rate = flag_rate(triage_results, len(comments))
     storage.checkpoint_stage(
         job.job_id, "triaging",
@@ -104,7 +110,9 @@ def run_job(
     outcomes = adjudicate_flagged(
         flagged_comments, applicant_username, rules, register_notes,
         api_key=api_key, triage_flags_by_id=triage_flags_by_id,
+        should_cancel=should_cancel,
     )
+    ensure_not_cancelled(should_cancel)
 
     unparseable_count = 0
     excluded_count = 0  # true exclusions only -- unparseable/error. context_unavailable is
@@ -130,6 +138,7 @@ def run_job(
     )
 
     # --- grounding ---
+    ensure_not_cancelled(should_cancel)
     storage.set_state(job.job_id, "grounding")
     corpus = {c.id: CorpusItem(id=c.id, body=c.body, permalink=c.permalink) for c, _ in findings_input}
     corpus_meta = {
@@ -144,6 +153,7 @@ def run_job(
     all_findings = [o.finding for _, o in findings_input]
     total_quotes_checked = sum(1 for f in all_findings for q in f.quotes.values() if q is not None)
     kept, dropped = ground(all_findings, corpus)
+    ensure_not_cancelled(should_cancel)
     storage.checkpoint_stage(
         job.job_id, "grounding",
         {"kept": len(kept), "dropped": len(dropped), "total_quotes_checked": total_quotes_checked},

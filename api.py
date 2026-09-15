@@ -35,6 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from mod_vetting.cancellation import JobCancelled
 from mod_vetting.orchestrator import compute_contract_hash, run_job
 from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_applicant_history, fetch_item_from_url, username_from_url
 from mod_vetting.llm import TRIAGE_MODEL, call_model
@@ -123,16 +124,14 @@ MAX_SUBREDDIT_SCOPE = 5
 REDDIT_API_BASE = "https://www.reddit.com"
 REDDIT_USER_AGENT = "reddit-pi/1.0 (public subreddit discovery)"
 
-POPULAR_SUBREDDIT_NAMES = [
-    "AskReddit", "worldnews", "news", "funny", "todayilearned", "pics", "gaming",
-    "movies", "television", "music", "books", "science", "technology", "space",
-    "sports", "soccer", "nba", "nfl", "formula1", "singapore", "askSingapore",
-    "sgworkassholes", "comics", "comicbooks", "CompetitiveHS", "hearthstone",
-    "cars", "CasualUK", "cats", "dogs", "food", "cooking", "travel", "DIY",
-    "personalfinance", "investing", "programming", "learnprogramming", "dataisbeautiful",
-    "machinelearning", "artificial", "android", "apple", "pcgaming", "NintendoSwitch",
-    "boardgames", "anime", "manga", "history", "explainlikeimfive", "LifeProTips",
-]
+SUBREDDIT_CATALOG_PATH = Path(__file__).parent / "frontend" / "src" / "data" / "popularSubreddits.json"
+try:
+    POPULAR_SUBREDDIT_NAMES = json.loads(SUBREDDIT_CATALOG_PATH.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    POPULAR_SUBREDDIT_NAMES = [
+        "AskReddit", "worldnews", "news", "funny", "todayilearned", "pics",
+        "gaming", "movies", "science", "singapore", "askSingapore", "comics",
+    ]
 _subreddit_cache = {"popular": None, "popular_at": 0.0, "suggestions": {}}
 _subreddit_cache_lock = threading.Lock()
 
@@ -229,47 +228,26 @@ def _fetch_subreddit_options(path: str, params: dict) -> list[dict]:
     return options
 
 
-def _fallback_subreddit_options(query: str = "") -> list[dict]:
+def _fallback_subreddit_options(query: str = "", limit: int | None = None) -> list[dict]:
     needle = query.casefold()
     names = POPULAR_SUBREDDIT_NAMES if not needle else sorted(
-        POPULAR_SUBREDDIT_NAMES,
+        (name for name in POPULAR_SUBREDDIT_NAMES if needle in name.casefold()),
         key=lambda name: (
             0 if name.casefold().startswith(needle) else 1,
             name.casefold().find(needle),
             name.casefold(),
         ),
     )
+    result_limit = limit if limit is not None else (12 if needle else 250)
     return [
         {"name": name, "title": "", "subscribers": 0}
-        for name in names
-        if not needle or needle in name.casefold()
-    ][:10 if needle else 24]
+        for name in names[:result_limit]
+    ]
 
 
 @app.get("/subreddits/popular")
-def popular_subreddits():
-    now = time.time()
-    with _subreddit_cache_lock:
-        cached = _subreddit_cache["popular"]
-        cached_at = _subreddit_cache["popular_at"]
-    if cached and now - cached_at < SUBREDDIT_CACHE_TTL_SECONDS:
-        return {"items": cached, "source": "cache"}
-    try:
-        items = _fetch_subreddit_options(
-            "/subreddits/popular.json",
-            {"limit": 100, "show": "all"},
-        )
-        if not items:
-            raise ValueError("Reddit returned no communities")
-        source = "reddit"
-    except (httpx.HTTPError, ValueError, KeyError):
-        logger.info("Using bundled subreddit list because Reddit popular lookup failed", exc_info=True)
-        items = _fallback_subreddit_options()
-        source = "fallback"
-    with _subreddit_cache_lock:
-        _subreddit_cache["popular"] = items
-        _subreddit_cache["popular_at"] = now
-    return {"items": items, "source": source}
+def popular_subreddits(limit: int = Query(default=250, ge=1, le=1000)):
+    return {"items": _fallback_subreddit_options(limit=limit), "source": "bundled"}
 
 
 @app.get("/subreddits/suggest")
@@ -277,35 +255,7 @@ def suggest_subreddits(q: str = Query(min_length=1, max_length=25)):
     query = q.strip().removeprefix("r/").removeprefix("/r/").strip("/")
     if not query:
         raise HTTPException(status_code=422, detail="Enter part of a subreddit name")
-    key = query.casefold()
-    now = time.time()
-    with _subreddit_cache_lock:
-        cached = _subreddit_cache["suggestions"].get(key)
-    if cached and now - cached["at"] < SUBREDDIT_SUGGEST_TTL_SECONDS:
-        return {"items": cached["items"], "source": "cache"}
-    try:
-        items = _fetch_subreddit_options(
-            "/api/subreddit_autocomplete_v2.json",
-            {
-                "query": query,
-                "include_profiles": "false",
-                "include_over_18": "false",
-                "limit": 10,
-            },
-        )
-        if not items:
-            raise ValueError("Reddit returned no suggestions")
-        source = "reddit"
-    except (httpx.HTTPError, ValueError, KeyError):
-        logger.info("Using bundled subreddit suggestions because Reddit autocomplete failed", exc_info=True)
-        items = _fallback_subreddit_options(query)
-        source = "fallback"
-    with _subreddit_cache_lock:
-        suggestions = _subreddit_cache["suggestions"]
-        if len(suggestions) >= 200:
-            suggestions.clear()
-        suggestions[key] = {"at": now, "items": items}
-    return {"items": items, "source": source}
+    return {"items": _fallback_subreddit_options(query, limit=12), "source": "bundled"}
 
 
 def _cache_key(req: CreateJobRequest) -> str:
@@ -360,6 +310,10 @@ def _serialize_activity_preview(items: list, limit: int = 6) -> list[dict]:
     ]
 
 
+def _job_cancel_requested(job_id: str) -> bool:
+    return bool(_jobs.get(job_id, {}).get("cancel_requested"))
+
+
 def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
     try:
         # sqlite3 connections are thread-affine (check_same_thread=True by
@@ -371,12 +325,14 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
         all_items = fetch_applicant_history(
             req.username, comment_cap=req.comment_cap, post_cap=req.post_cap
         )
+        if _job_cancel_requested(job_id):
+            raise JobCancelled("Investigation cancelled")
         items = _filter_by_subreddits(all_items, req.subreddits)
         if req.subreddits and not items:
             scope = ", ".join(f"r/{name}" for name in req.subreddits)
             raise ValueError(f"No public activity from this account was found in {scope}.")
         community_counts = _community_counts(items)
-        _jobs[job_id] = {
+        _jobs[job_id].update({
             "status": "running",
             "phase": "analyzing",
             "activity_preview": _serialize_activity_preview(items),
@@ -385,7 +341,7 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
             "community_counts": community_counts,
             "report": None,
             "error": None,
-        }
+        })
         report = run_job(
             storage=storage,
             applicant_username=req.username,
@@ -395,7 +351,10 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
             comment_cap=req.comment_cap,
             post_cap=req.post_cap,
             prefetched_items=items,
+            should_cancel=lambda: _job_cancel_requested(job_id),
         )
+        if _job_cancel_requested(job_id):
+            raise JobCancelled("Investigation cancelled")
         report["analysis_scope"] = req.subreddits
         report["community_counts"] = community_counts
         if req.url:
@@ -415,6 +374,8 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
         # caller until this returns -- re-key under our pre-issued job_id
         # so POST's returned id is the one GET actually looks up.
         _jobs[job_id] = {"status": "done", "report": report, "error": None}
+    except JobCancelled:
+        _jobs[job_id] = {"status": "cancelled", "report": None, "error": None}
     except Exception as e:  # noqa: BLE001 -- surfaced to the poller, not swallowed
         _jobs[job_id] = {"status": "error", "report": None, "error": str(e)}
 
@@ -460,11 +421,23 @@ def create_job(req: CreateJobRequest):
         return {"job_id": job_id, "status": "done", "cached": True}
     _jobs[job_id] = {
         "status": "running", "phase": "fetching", "activity_preview": [],
-        "activity_total": 0, "report": None, "error": None,
+        "activity_total": 0, "report": None, "error": None, "cancel_requested": False,
     }
     thread = threading.Thread(target=_run_in_background, args=(job_id, req, cache_key), daemon=True)
     thread.start()
     return {"job_id": job_id, "status": "running"}
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    entry = _jobs.get(job_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown job_id")
+    if entry.get("status") != "running":
+        return {"job_id": job_id, "status": entry.get("status")}
+    entry["cancel_requested"] = True
+    entry["phase"] = "cancelling"
+    return {"job_id": job_id, "status": "cancelling"}
 
 
 @app.get("/jobs/{job_id}")

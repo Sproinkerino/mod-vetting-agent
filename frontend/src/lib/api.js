@@ -1,3 +1,5 @@
+import { abortableDelay, throwIfAborted } from './polling';
+
 // Local development talks to the local API; production defaults to Render.
 // VITE_API_BASE can override either environment explicitly.
 const API_BASE = import.meta.env.VITE_API_BASE || (
@@ -33,8 +35,8 @@ export async function startJob(target, subreddits = []) {
   return res.json(); // { job_id, status }
 }
 
-export async function pollJob(jobId) {
-  const res = await fetch(`${API_BASE}/jobs/${jobId}`);
+export async function pollJob(jobId, { signal } = {}) {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}`, { signal });
   if (!res.ok) throw new Error(`Failed to fetch job (${res.status})`);
   return res.json(); // { status, report, error }
 }
@@ -58,16 +60,22 @@ export async function askArchive(jobId, question, report, sourceCount = 1, subre
   return res.json();
 }
 
+export async function cancelJob(jobId) {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Could not cancel job (${res.status})`);
+  return res.json();
+}
 /** Polls until the job leaves "running", calling onTick with each poll
  * for progress UI. Backend runs can take minutes -- dozens of
  * concurrency-capped LLM calls -- so this is a real wait, not a formality. */
-export async function waitForJob(jobId, { intervalMs = 4000, timeoutMs = 6 * 60 * 1000, onTick } = {}) {
+export async function waitForJob(jobId, { intervalMs = 4000, timeoutMs = 6 * 60 * 1000, onTick, signal } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const entry = await pollJob(jobId);
+    throwIfAborted(signal);
+    const entry = await pollJob(jobId, { signal });
     onTick?.(entry, Date.now() - start);
     if (entry.status !== 'running') return entry;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    await abortableDelay(intervalMs, signal);
   }
   throw new Error('Timed out waiting for the report (6 minutes).');
 }

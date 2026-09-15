@@ -10,6 +10,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
+from .cancellation import ensure_not_cancelled
 from .fetch import ThreadContextUnavailable, fetch_thread_context
 from .grounding import Finding
 from .llm import ADJUDICATE_MODEL, SchemaValidationError, call_model
@@ -161,6 +162,7 @@ def adjudicate_flagged(
     register_notes: str,
     api_key: str | None = None,
     triage_flags_by_id: dict[str, set[str]] | None = None,
+    should_cancel=None,
 ) -> list[AdjudicationOutcome]:
     if len(flagged_comments) > HARD_FAIL_PENDING_REVIEW_THRESHOLD:
         raise RuntimeError(
@@ -169,14 +171,18 @@ def adjudicate_flagged(
         )
 
     outcomes: list[AdjudicationOutcome | None] = [None] * len(flagged_comments)
-    with ThreadPoolExecutor(max_workers=CONCURRENCY_CAP) as pool:
-        futures = {
-            pool.submit(
-                adjudicate_one, c, applicant_username, rules, register_notes, api_key,
-                (triage_flags_by_id or {}).get(c.id),
-            ): i
-            for i, c in enumerate(flagged_comments)
-        }
-        for fut in as_completed(futures):
-            outcomes[futures[fut]] = fut.result()
+    for start in range(0, len(flagged_comments), CONCURRENCY_CAP):
+        ensure_not_cancelled(should_cancel)
+        batch = flagged_comments[start : start + CONCURRENCY_CAP]
+        with ThreadPoolExecutor(max_workers=min(CONCURRENCY_CAP, len(batch))) as pool:
+            futures = {
+                pool.submit(
+                    adjudicate_one, c, applicant_username, rules, register_notes, api_key,
+                    (triage_flags_by_id or {}).get(c.id),
+                ): start + index
+                for index, c in enumerate(batch)
+            }
+            for fut in as_completed(futures):
+                outcomes[futures[fut]] = fut.result()
+        ensure_not_cancelled(should_cancel)
     return outcomes  # type: ignore[return-value]

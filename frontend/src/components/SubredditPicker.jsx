@@ -1,8 +1,21 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { fetchPopularSubreddits, suggestSubreddits } from '../lib/api';
+import { useId, useMemo, useRef, useState } from 'react';
 import { MAX_SUBREDDITS, normalizeSubredditName, sameSubreddit } from '../lib/subreddits';
+import { findSubreddits, POPULAR_SUBREDDITS } from '../lib/subredditCatalog';
 
 const VALID_NAME = /^[A-Za-z0-9_]{2,21}$/;
+
+function rankOptions(items, query, limit = 10) {
+  const needle = query.toLocaleLowerCase();
+  return items
+    .filter((item) => item.name.toLocaleLowerCase().includes(needle))
+    .sort((left, right) => {
+      const leftName = left.name.toLocaleLowerCase();
+      const rightName = right.name.toLocaleLowerCase();
+      const prefixDifference = Number(!leftName.startsWith(needle)) - Number(!rightName.startsWith(needle));
+      return prefixDifference || (right.count || 0) - (left.count || 0) || left.name.localeCompare(right.name);
+    })
+    .slice(0, limit);
+}
 
 export default function SubredditPicker({
   value = [],
@@ -20,61 +33,20 @@ export default function SubredditPicker({
   const statusId = `subreddit-status-${reactId}`;
   const rootRef = useRef(null);
   const [query, setQuery] = useState('');
-  const [remoteOptions, setRemoteOptions] = useState([]);
-  const [popular, setPopular] = useState([]);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [status, setStatus] = useState(options ? 'ready' : 'loading');
-
-  useEffect(() => {
-    if (options) return undefined;
-    let current = true;
-    fetchPopularSubreddits()
-      .then((items) => {
-        if (!current) return;
-        setPopular(items);
-        setStatus('ready');
-      })
-      .catch(() => {
-        if (!current) return;
-        setPopular([]);
-        setStatus('error');
-      });
-    return () => { current = false; };
-  }, [options]);
-
-  useEffect(() => {
-    const normalized = normalizeSubredditName(query);
-    if (!normalized || options) return undefined;
-    let current = true;
-    const timer = window.setTimeout(() => {
-      suggestSubreddits(normalized)
-        .then((items) => {
-          if (!current) return;
-          setRemoteOptions(items);
-          setStatus('ready');
-        })
-        .catch(() => {
-          if (!current) return;
-          setRemoteOptions([]);
-          setStatus('error');
-        });
-    }, 200);
-    return () => {
-      current = false;
-      window.clearTimeout(timer);
-    };
-  }, [query, options]);
 
   const suggestions = useMemo(() => {
     const normalized = normalizeSubredditName(query);
-    const source = normalized ? (options || remoteOptions).filter((item) => item.name.toLowerCase().includes(normalized.toLowerCase())) : (options || popular);
+    const source = options
+      ? (normalized ? rankOptions(options, normalized) : options.slice(0, 10))
+      : findSubreddits(normalized, 10);
     const available = source.filter((item) => !value.some((selected) => sameSubreddit(selected, item.name)));
     if (normalized && VALID_NAME.test(normalized) && !available.some((item) => sameSubreddit(item.name, normalized))) {
       return [{ name: normalized, custom: true }, ...available].slice(0, 10);
     }
     return available.slice(0, 10);
-  }, [options, popular, query, remoteOptions, value]);
+  }, [options, query, value]);
 
   function select(name) {
     if (value.length >= MAX_SUBREDDITS || value.some((selected) => sameSubreddit(selected, name))) return;
@@ -107,14 +79,9 @@ export default function SubredditPicker({
 
   const limitReached = value.length >= MAX_SUBREDDITS;
   const visibleSuggestions = open && !limitReached;
-  const effectiveStatus = !normalizeSubredditName(query) || options ? 'ready' : status;
   const statusText = limitReached
     ? `Maximum ${MAX_SUBREDDITS} communities selected.`
-    : effectiveStatus === 'loading'
-      ? 'Loading subreddit suggestions.'
-      : effectiveStatus === 'error'
-        ? 'Live suggestions are unavailable. You can still enter a subreddit name.'
-        : `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} available.`;
+    : `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} available from the bundled directory.`;
 
   return <div className={`subreddit-picker subreddit-picker-${variant}`} ref={rootRef}>
     <div className="subreddit-picker-heading">
@@ -132,7 +99,7 @@ export default function SubredditPicker({
         aria-activedescendant={visibleSuggestions && suggestions[activeIndex] ? `${listId}-${activeIndex}` : undefined}
         aria-describedby={statusId}
         value={query}
-        onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); setStatus(options ? 'ready' : 'loading'); setOpen(true); }}
+        onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onBlur={(event) => {
           if (!rootRef.current?.contains(event.relatedTarget)) setOpen(false);
@@ -146,7 +113,7 @@ export default function SubredditPicker({
       {visibleSuggestions && <ul id={listId} role="listbox" className="subreddit-options">
         {suggestions.map((item, index) => <li role="none" key={item.name}>
           <button
-            id={listId + '-' + index}
+            id={`${listId}-${index}`}
             role="option"
             aria-selected={index === activeIndex}
             type="button"
@@ -158,16 +125,15 @@ export default function SubredditPicker({
             {item.custom && <em>Use name</em>}
           </button>
         </li>)}
-        {effectiveStatus === 'loading' && <li className="subreddit-option-message">Searching Reddit...</li>}
-        {effectiveStatus !== 'loading' && suggestions.length === 0 && <li className="subreddit-option-message">No communities found.</li>}
+        {suggestions.length === 0 && <li className="subreddit-option-message">No matching community. You can still enter its exact name.</li>}
       </ul>}
     </div>
     {value.length > 0 && <div className="selected-subreddits" aria-label="Selected communities">
       {value.map((name) => <span key={name}>r/{name}<button type="button" aria-label={`Remove r/${name}`} onClick={() => remove(name)} disabled={disabled}>x</button></span>)}
     </div>}
-    {showPopular && value.length === 0 && popular.length > 0 && <div className="popular-subreddits" aria-label="Popular communities">
+    {showPopular && value.length === 0 && <div className="popular-subreddits" aria-label="Popular communities">
       <span>Popular</span>
-      {popular.slice(0, 6).map((item) => <button type="button" key={item.name} onClick={() => select(item.name)} disabled={disabled}>r/{item.name}</button>)}
+      {POPULAR_SUBREDDITS.slice(0, 6).map((item) => <button type="button" key={item.name} onClick={() => select(item.name)} disabled={disabled}>r/{item.name}</button>)}
     </div>}
     <small className="subreddit-help">{help}</small>
     <span id={statusId} className="visually-hidden" role="status" aria-live="polite">{statusText}</span>

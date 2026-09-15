@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { askArchive, startJob, waitForJob } from './lib/api';
+import { useMemo, useRef, useState } from 'react';
+import { askArchive, cancelJob, startJob, waitForJob } from './lib/api';
 import { groupFindingsById } from './lib/findings';
 import { communityOptions, isInSubredditScope, metricsFromFindings } from './lib/subreddits';
 import FindingCard from './components/FindingCard';
@@ -7,7 +7,7 @@ import ActivityExplorer from './components/ActivityExplorer';
 import DetectiveMascot from './components/DetectiveMascot';
 import ExpandableText from './components/ExpandableText';
 import SubredditPicker from './components/SubredditPicker';
-import { buildRedditShareText } from './lib/shareText';
+import { buildRedditShareText, CANONICAL_SITE_URL } from './lib/shareText';
 import { loadingActivity } from './lib/loadingPreview';
 import { sourceExcerpt, sourceKind, sourceText } from './lib/sourceContent';
 
@@ -22,6 +22,7 @@ export default function App() {
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState({ phase: 'fetching', activity_preview: [], activity_total: 0 });
+  const activeRun = useRef(null);
 
   async function investigate(event) {
     event.preventDefault();
@@ -34,19 +35,42 @@ export default function App() {
       setError('Enter a Reddit username or a full reddit.com post or comment URL.');
       return;
     }
+    const run = { controller: new AbortController(), jobId: null };
+    activeRun.current = run;
     setStage('running');
     setError('');
     setProgress({ phase: 'fetching', activity_preview: [], activity_total: 0, analysis_scope: analysisSubreddits });
     try {
       const { job_id } = await startJob(normalized, analysisSubreddits);
-      const result = await waitForJob(job_id, { onTick: setProgress });
+      run.jobId = job_id;
+      if (run.controller.signal.aborted) {
+        await cancelJob(job_id).catch(() => undefined);
+        return;
+      }
+      const result = await waitForJob(job_id, { onTick: setProgress, signal: run.controller.signal });
+      if (result.status === 'cancelled') return;
       if (result.status === 'error') throw new Error(result.error || 'Investigation failed.');
       setReport({ ...result.report, api_job_id: job_id });
       setStage('done');
     } catch (reason) {
+      if (reason.name === 'AbortError') return;
       setError(reason.message.includes('fetch') ? reason.message + ' Is the local API running on port 8000?' : reason.message);
       setStage('error');
+    } finally {
+      if (activeRun.current === run) activeRun.current = null;
     }
+  }
+
+  function cancelInvestigation() {
+    const run = activeRun.current;
+    if (!run) return;
+    run.controller.abort();
+    if (run.jobId) cancelJob(run.jobId).catch(() => undefined);
+    activeRun.current = null;
+    setStage('idle');
+    setReport(null);
+    setError('');
+    setProgress({ phase: 'fetching', activity_preview: [], activity_total: 0 });
   }
 
   function reset() {
@@ -74,7 +98,7 @@ export default function App() {
           <SubredditPicker value={analysisSubreddits} onChange={setAnalysisSubreddits} disabled={stage === 'running'} label="Focus the investigation" help="Optional. Only selected communities will be sent through AI analysis." showPopular />
           <small id="input-help">Only public Reddit activity is reviewed. Results are cached for 3 days.</small>
         </form>
-        {stage === 'running' && <LoadingState progress={progress} scope={analysisSubreddits} />}
+        {stage === 'running' && <LoadingState progress={progress} scope={analysisSubreddits} onCancel={cancelInvestigation} />}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="trust-row" aria-label="Product principles"><span>✓ Exact quotes</span><span>✓ Direct source links</span><span>✓ No invented claims</span></div>
       </section>
@@ -86,12 +110,15 @@ function AppShell({ children, action }) {
   return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a><header className="topbar"><a className="logo" href="/" aria-label="reddit-pi home"><span>◆</span> reddit<span>-pi</span></a><p>Receipts before replies.</p>{action}</header>{children}</div>;
 }
 
-function LoadingState({ progress, scope = [] }) {
+function LoadingState({ progress, scope = [], onCancel }) {
   const activity = loadingActivity(progress);
   const analyzing = progress.phase === 'analyzing';
   const scopeText = scope.length ? scope.map((name) => 'r/' + name).join(', ') : 'all communities';
-  return <section className="loading-card" role="status" aria-live="polite">
-    <div className="loading-status"><div className="scanner"><i /></div><div><strong>{analyzing ? 'History loaded. Analyzing now...' : 'Fetching public history...'}</strong><p>{analyzing ? progress.activity_total + ' scoped public items found. You can start reading while deeper analysis continues.' : 'Loading activity from ' + scopeText + '.'}</p></div></div>
+  return <section className="loading-card" aria-label="Investigation progress">
+    <div className="loading-status">
+      <div className="loading-status-copy" role="status" aria-live="polite"><div className="scanner"><i /></div><div><strong>{analyzing ? 'History loaded. Analyzing now...' : 'Fetching public history...'}</strong><p>{analyzing ? progress.activity_total + ' scoped public items found. You can start reading while deeper analysis continues.' : 'Loading activity from ' + scopeText + '.'}</p></div></div>
+      <button type="button" className="cancel-search" onClick={onCancel}>Cancel & edit search</button>
+    </div>
     {activity.length > 0 && <div className="loading-preview"><div className="loading-preview-head"><strong>Recent posts and comments</strong><span>Analysis is still running</span></div><div className="loading-preview-list">{activity.map((item) => <article key={item.type + '-' + item.id}><div className="loading-preview-type"><b>{sourceKind(item)}</b><span>r/{item.subreddit}</span></div><p>{sourceExcerpt(item, 160)}</p><div>{item.permalink && <a href={item.permalink} target="_blank" rel="noreferrer">View source ↗</a>}</div></article>)}</div></div>}
   </section>;
 }
@@ -170,7 +197,7 @@ function AskPanel({ report, subreddits, onScopeChange, options }) {
   const sources = result ? result.sources.map((source) => ({ ...(report.activity || []).find((item) => item.id === source.id), ...source })) : [];
   const displayOpener = result ? humanizeCitations(result.opener || '', sources) : '';
   const displayAnswer = result ? humanizeCitations(result.answer, sources) : '';
-  const shareText = result ? buildRedditShareText({ sources, opener: displayOpener, answer: displayAnswer, origin: window.location.origin }) : '';
+  const shareText = result ? buildRedditShareText({ sources, opener: displayOpener, answer: displayAnswer }) : '';
 
   async function copy() {
     await navigator.clipboard.writeText(shareText);
@@ -187,7 +214,7 @@ function AskPanel({ report, subreddits, onScopeChange, options }) {
     <div className="prompt-chips">{suggestions.map((suggestion) => <button type="button" key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div>
     <form onSubmit={ask} className="ask-form"><label className="visually-hidden" htmlFor="archive-question">Question about this Redditor</label><textarea id="archive-question" rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. Find racist remarks or anything about colour"/><button disabled={busy || !question.trim()}>{busy ? 'Checking sources...' : 'Check the receipts →'}</button></form>
     {error && <p className="error" role="alert">{error}</p>}
-    {result && <div className="reply-card" aria-live="polite"><div className="card-label"><span>COPY-READY COMEBACK</span><button type="button" onClick={copy}>{copied ? 'Copied ✓' : 'Copy'}</button></div>{displayOpener && <p className="reply-opener">{displayOpener}</p>}{sources.length > 0 && <div className="comeback-quotes">{sources.slice(0, 3).map((source, index) => <blockquote key={source.id}><span>{sourceKind(source)} {index + 1}</span>“{sourceExcerpt(source)}”</blockquote>)}</div>}<p className="reply-text">{displayAnswer}</p>{result.provider_fallback && <p className="provider-note">AI wording was unavailable, so no unsupported conclusion was generated.</p>}{sources.length > 0 && <div className="raw-sources"><div className="raw-sources-heading"><strong>Check the full posts and comments</strong><span>Raw text from Reddit</span></div>{sources.map((source, index) => <article className="raw-source" key={source.id}><div><b>Source {index + 1}</b><span>{source.subreddit ? 'r/' + source.subreddit : 'Reddit'}{source.created_utc ? ' · ' + new Date(source.created_utc * 1000).toLocaleDateString() : ''}</span></div>{source.type === 'post' && source.title && <h3>{source.title}</h3>}{(source.type !== 'post' || source.body !== source.title) && <ExpandableText className="raw-comment" text={source.type === 'post' ? (source.body || 'Post text unavailable.') : sourceText(source)} />}<a href={source.permalink} target="_blank" rel="noreferrer">Open original context ↗</a></article>)}</div>}<small>This reply was generated by reddit-pi. <a href="/">Website</a></small></div>}
+    {result && <div className="reply-card" aria-live="polite"><div className="card-label"><span>COPY-READY COMEBACK</span><button type="button" onClick={copy}>{copied ? 'Copied ✓' : 'Copy'}</button></div>{displayOpener && <p className="reply-opener">{displayOpener}</p>}{sources.length > 0 && <div className="comeback-quotes">{sources.slice(0, 3).map((source, index) => <blockquote key={source.id}><span>{sourceKind(source)} {index + 1}</span>“{sourceExcerpt(source)}”</blockquote>)}</div>}<p className="reply-text">{displayAnswer}</p>{result.provider_fallback && <p className="provider-note">AI wording was unavailable, so no unsupported conclusion was generated.</p>}{sources.length > 0 && <div className="raw-sources"><div className="raw-sources-heading"><strong>Check the full posts and comments</strong><span>Raw text from Reddit</span></div>{sources.map((source, index) => <article className="raw-source" key={source.id}><div><b>Source {index + 1}</b><span>{source.subreddit ? 'r/' + source.subreddit : 'Reddit'}{source.created_utc ? ' · ' + new Date(source.created_utc * 1000).toLocaleDateString() : ''}</span></div>{source.type === 'post' && source.title && <h3>{source.title}</h3>}{(source.type !== 'post' || source.body !== source.title) && <ExpandableText className="raw-comment" text={source.type === 'post' ? (source.body || 'Post text unavailable.') : sourceText(source)} />}<a href={source.permalink} target="_blank" rel="noreferrer">Open original context ↗</a></article>)}</div>}<small>This reply was generated by reddit-pi. <a href={CANONICAL_SITE_URL}>Website</a></small></div>}
   </section>;
 }
 
