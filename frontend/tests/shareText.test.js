@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRedditShareText, redditBlockquote } from '../src/lib/shareText.js';
+import { buildRedditShareText, buildToxicCompilationShareText, redditBlockquote } from '../src/lib/shareText.js';
 
 test('prefixes every line so multiline text stays quoted on Reddit mobile', () => {
   assert.equal(redditBlockquote('first line\n\nsecond line'), '> first line\n>\n> second line');
@@ -41,4 +41,15 @@ test('share text always uses the canonical site instead of an old host', () => {
 
   assert.match(text, /\[Website\]\(https:\/\/reddit-pi\.live\)/);
   assert.doesNotMatch(text, /onrender\.com/);
+});
+test('builds a ten-source toxic compilation in mobile Reddit format', () => {
+  const sources = Array.from({ length: 10 }, (_, index) => ({
+    id: 'c' + index, quote: 'focused quote ' + index, body: 'focused quote ' + index + ' with context',
+    permalink: 'https://reddit.com/c' + index,
+  }));
+  const text = buildToxicCompilationShareText({ username: 'example', sources });
+  assert.ok(text.startsWith('Best comments from u/example\n\n> focused quote 0...'));
+  assert.equal((text.match(/\[Source\]/g) || []).length, 10);
+  assert.ok(text.includes('Sourced by reddit-pi'));
+  assert.ok(text.includes('https://reddit-pi.live'));
 });

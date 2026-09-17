@@ -16,7 +16,7 @@ const DEFAULT_RULES =
   'Spam or repeated self-promotion. Doxxing or sharing private information. Ban evasion.';
 const DEFAULT_REGISTER_NOTES = 'No subreddit-specific house style provided -- read literally.';
 
-export async function startJob(target, subreddits = []) {
+export async function startJob(target, subreddits = [], discoverCommunities = false) {
   const isUrl = /^https?:\/\//i.test(target);
   const res = await fetch(`${API_BASE}/jobs`, {
     method: 'POST',
@@ -26,6 +26,7 @@ export async function startJob(target, subreddits = []) {
       rules: DEFAULT_RULES,
       register_notes: DEFAULT_REGISTER_NOTES,
       subreddits,
+      discover_communities: discoverCommunities,
     }),
   });
   if (!res.ok) {
@@ -51,6 +52,7 @@ export async function askArchive(jobId, question, report, sourceCount = 1, subre
       activity: report?.activity || [],
       source_count: sourceCount,
       subreddits,
+      discover_communities: discoverCommunities,
     }),
   });
   if (!res.ok) {
@@ -65,6 +67,18 @@ export async function cancelJob(jobId) {
   if (!res.ok) throw new Error(`Could not cancel job (${res.status})`);
   return res.json();
 }
+export async function compileToxicArchive(report, subreddits = []) {
+  const res = await fetch(`${API_BASE}/jobs/${report.api_job_id}/compile-toxic`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: report.applicant.username, activity: report.activity || [], subreddits }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || 'Could not compile the receipts.');
+  }
+  return res.json();
+}
+
 /** Polls until the job leaves "running", calling onTick with each poll
  * for progress UI. Backend runs can take minutes -- dozens of
  * concurrency-capped LLM calls -- so this is a real wait, not a formality. */
@@ -79,6 +93,23 @@ export async function waitForJob(jobId, { intervalMs = 4000, timeoutMs = 6 * 60 
   }
   throw new Error('Timed out waiting for the report (6 minutes).');
 }
+export async function notificationConfigRequest() {
+  const res = await fetch(`${API_BASE}/notifications/config`);
+  if (!res.ok) throw new Error('Notifications are unavailable.');
+  return res.json();
+}
+
+export async function subscribeJobNotification(jobId, subscription) {
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/notifications`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(subscription),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    throw new Error(payload.detail || 'Could not enable notifications.');
+  }
+  return res.json();
+}
+
 async function subredditRequest(path) {
   const res = await fetch(API_BASE + path);
   if (!res.ok) throw new Error('Could not load communities (' + res.status + ')');

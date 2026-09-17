@@ -44,6 +44,83 @@ def test_filter_by_subreddits_is_case_insensitive():
     assert [item["id"] for item in api_module._filter_by_subreddits(activity, ["singapore"])] == ["sg1"]
 
 
+
+def test_empty_scope_recommends_the_accounts_actual_communities():
+    activity = [
+        _item("sg1", "Singapore", "One"),
+        _item("sg2", "Singapore", "Two"),
+        _item("coffee1", "coffee", "Three"),
+    ]
+
+    entry = api_module._empty_scope_entry(["AskReddit", "worldnews"], activity)
+
+    assert entry["status"] == "scope_empty"
+    assert entry["requested_subreddits"] == ["AskReddit", "worldnews"]
+    assert entry["activity_total"] == 3
+    assert entry["community_total"] == 2
+    assert entry["community_counts"] == [
+        {"name": "Singapore", "count": 2},
+        {"name": "coffee", "count": 1},
+    ]
+    assert entry["suggested_subreddits"] == ["Singapore", "coffee"]
+
+
+
+def test_background_scope_miss_returns_recovery_without_running_ai(monkeypatch, tmp_path):
+    activity = [
+        _item("sg1", "Singapore", "One"),
+        _item("sg2", "Singapore", "Two"),
+        _item("coffee1", "coffee", "Three"),
+    ]
+    job_id = "scope-recovery-job"
+    request = api_module.CreateJobRequest(
+        username="example",
+        subreddits=["AskReddit"],
+        rules="No harassment.",
+        register_notes="Read literally.",
+    )
+    monkeypatch.setattr(api_module, "DB_PATH", tmp_path / "recovery.db")
+    monkeypatch.setattr(api_module, "fetch_applicant_history", lambda *args, **kwargs: activity)
+    monkeypatch.setattr(api_module, "run_job", lambda **kwargs: (_ for _ in ()).throw(AssertionError("AI should not run")))
+    api_module._jobs[job_id] = {"status": "running", "cancel_requested": False}
+    try:
+        api_module._run_in_background(job_id, request, "unused-cache-key")
+        entry = api_module._jobs[job_id]
+        assert entry["status"] == "scope_empty"
+        assert entry["suggested_subreddits"] == ["Singapore", "coffee"]
+        assert entry["community_counts"][0] == {"name": "Singapore", "count": 2}
+    finally:
+        api_module._jobs.pop(job_id, None)
+
+
+
+def test_discovery_mode_ranks_communities_and_skips_ai(monkeypatch, tmp_path):
+    activity = [
+        _item("sg1", "Singapore", "One"),
+        _item("sg2", "Singapore", "Two"),
+        _item("coffee1", "coffee", "Three"),
+    ]
+    job_id = "community-discovery-job"
+    request = api_module.CreateJobRequest(
+        username="example",
+        discover_communities=True,
+        rules="No harassment.",
+        register_notes="Read literally.",
+    )
+    monkeypatch.setattr(api_module, "DB_PATH", tmp_path / "discovery.db")
+    monkeypatch.setattr(api_module, "fetch_applicant_history", lambda *args, **kwargs: activity)
+    monkeypatch.setattr(api_module, "run_job", lambda **kwargs: (_ for _ in ()).throw(AssertionError("AI should not run")))
+    api_module._jobs[job_id] = {"status": "running", "cancel_requested": False}
+    try:
+        api_module._run_in_background(job_id, request, "unused-cache-key")
+        entry = api_module._jobs[job_id]
+        assert entry["status"] == "communities_ready"
+        assert entry["suggested_subreddits"] == ["Singapore", "coffee"]
+        assert entry["activity_total"] == 3
+    finally:
+        api_module._jobs.pop(job_id, None)
+
+
 def test_bundled_popular_list_contains_one_thousand_searchable_communities():
     response = TestClient(api_module.app).get("/subreddits/popular?limit=1000")
 

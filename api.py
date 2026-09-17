@@ -24,6 +24,10 @@ import re
 import hashlib
 import json
 import logging
+import os
+import base64
+import binascii
+from urllib.parse import urlparse
 import time
 from collections import Counter
 from pathlib import Path
@@ -40,6 +44,7 @@ from mod_vetting.orchestrator import compute_contract_hash, run_job
 from mod_vetting.fetch import REDDIT_USERNAME_RE, fetch_applicant_history, fetch_item_from_url, username_from_url
 from mod_vetting.llm import TRIAGE_MODEL, call_model
 from mod_vetting.storage import Storage
+from mod_vetting.toxic_receipts import TOXIC_REQUEST, TOXIC_RANK_PROMPT, verified_toxic_receipts
 
 app = FastAPI(title="reddit-pi API")
 app.add_middleware(
@@ -116,6 +121,49 @@ COMEBACK_SYSTEM_PROMPT = (
 # checkpoints every stage (crash-resumable), this dict is just so the API
 # can answer "is it done yet" without re-reading storage on every poll.
 _jobs: dict[str, dict] = {}
+_push_subscriptions: dict[str, list[dict]] = {}
+_push_lock = threading.Lock()
+_PUSH_HOSTS = ("fcm.googleapis.com", "push.services.mozilla.com", "web.push.apple.com", "notify.windows.com")
+
+
+def _valid_push_subscription(subscription: dict) -> bool:
+    try:
+        parsed = urlparse(subscription["endpoint"])
+        host = (parsed.hostname or "").casefold()
+        if parsed.scheme != "https" or not any(host == allowed or host.endswith("." + allowed) for allowed in _PUSH_HOSTS):
+            return False
+        decoded = {}
+        for name in ("p256dh", "auth"):
+            value = subscription["keys"][name]
+            decoded[name] = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        return len(decoded["p256dh"]) == 65 and decoded["p256dh"][0] == 4 and len(decoded["auth"]) >= 16
+    except (KeyError, TypeError, ValueError, binascii.Error):
+        return False
+
+
+def _notify_job(job_id: str) -> None:
+    with _push_lock:
+        subscriptions = _push_subscriptions.pop(job_id, [])
+    if not subscriptions:
+        return
+    entry = _jobs.get(job_id, {})
+    status = entry.get("status")
+    if status not in {"done", "error", "scope_empty", "communities_ready"}:
+        return
+    private_key, subject = os.environ.get("VAPID_PRIVATE_KEY"), os.environ.get("VAPID_SUBJECT")
+    if not private_key or not subject:
+        return
+    from pywebpush import webpush
+    payload = json.dumps({
+        "title": "Your reddit-pi report is ready" if status == "done" else "reddit-pi finished checking",
+        "body": "Tap to view the results.", "url": f"/?job={job_id}",
+    })
+    for subscription in subscriptions:
+        try:
+            webpush(subscription_info=subscription, data=payload,
+                    vapid_private_key=private_key, vapid_claims={"sub": subject}, ttl=3600, timeout=10)
+        except Exception:  # An alert failure must not invalidate an already completed report.
+            logger.warning("Push delivery failed for job %s", job_id, exc_info=True)
 CACHE_TTL_SECONDS = 3 * 24 * 60 * 60
 SUBREDDIT_CACHE_TTL_SECONDS = 24 * 60 * 60
 SUBREDDIT_SUGGEST_TTL_SECONDS = 6 * 60 * 60
@@ -145,6 +193,7 @@ class CreateJobRequest(BaseModel):
     # Posts are not consumed by the current scoring pipeline.
     post_cap: int = 50
     subreddits: list[str] = Field(default_factory=list, max_length=MAX_SUBREDDIT_SCOPE)
+    discover_communities: bool = False
     applicant_meta: dict | None = None
 
 
@@ -153,6 +202,22 @@ class AskRequest(BaseModel):
     username: str | None = None
     activity: list[dict] | None = None
     source_count: int = Field(default=1, ge=1, le=3)
+    subreddits: list[str] = Field(default_factory=list, max_length=MAX_SUBREDDIT_SCOPE)
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(min_length=40, max_length=200)
+    auth: str = Field(min_length=8, max_length=100)
+
+
+class PushSubscription(BaseModel):
+    endpoint: str = Field(min_length=20, max_length=1000)
+    keys: PushKeys
+
+
+class CompileRequest(BaseModel):
+    username: str | None = None
+    activity: list[dict] | None = None
     subreddits: list[str] = Field(default_factory=list, max_length=MAX_SUBREDDIT_SCOPE)
 
 
@@ -195,6 +260,35 @@ def _community_counts(items: list) -> list[dict]:
         {"name": display_names[key], "count": count}
         for key, count in sorted(counts.items(), key=lambda pair: (-pair[1], display_names[pair[0]].casefold()))
     ]
+
+
+
+def _empty_scope_entry(requested_subreddits: list[str], all_items: list) -> dict:
+    """Turn a scope miss into a useful, grounded recovery path."""
+    community_counts = _community_counts(all_items)
+    requested = ", ".join(f"r/{name}" for name in requested_subreddits)
+    return {
+        "status": "scope_empty",
+        "report": None,
+        "error": None,
+        "message": f"No public activity from this account was found in {requested}.",
+        "requested_subreddits": requested_subreddits,
+        "community_counts": community_counts[:12],
+        "community_total": len(community_counts),
+        "activity_total": len(all_items),
+        "suggested_subreddits": [item["name"] for item in community_counts[:5]],
+    }
+
+
+
+def _community_discovery_entry(all_items: list) -> dict:
+    """Return ranked authored-community counts without starting AI analysis."""
+    entry = _empty_scope_entry([], all_items)
+    entry.update({
+        "status": "communities_ready",
+        "message": "The account's most-used communities are ready.",
+    })
+    return entry
 
 
 def _subreddit_option(data: dict) -> dict | None:
@@ -327,10 +421,13 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
         )
         if _job_cancel_requested(job_id):
             raise JobCancelled("Investigation cancelled")
+        if req.discover_communities:
+            _jobs[job_id] = {**_community_discovery_entry(all_items), "username": req.username}
+            return
         items = _filter_by_subreddits(all_items, req.subreddits)
         if req.subreddits and not items:
-            scope = ", ".join(f"r/{name}" for name in req.subreddits)
-            raise ValueError(f"No public activity from this account was found in {scope}.")
+            _jobs[job_id] = {**_empty_scope_entry(req.subreddits, all_items), "username": req.username}
+            return
         community_counts = _community_counts(items)
         _jobs[job_id].update({
             "status": "running",
@@ -378,6 +475,8 @@ def _run_in_background(job_id: str, req: CreateJobRequest, cache_key: str):
         _jobs[job_id] = {"status": "cancelled", "report": None, "error": None}
     except Exception as e:  # noqa: BLE001 -- surfaced to the poller, not swallowed
         _jobs[job_id] = {"status": "error", "report": None, "error": str(e)}
+    finally:
+        _notify_job(job_id)
 
 
 @app.post("/jobs")
@@ -413,7 +512,7 @@ def create_job(req: CreateJobRequest):
         raise HTTPException(status_code=400, detail="Enter a valid Reddit username (3-20 letters, numbers, _ or -)")
     cache_key = _cache_key(req)
     job_id = str(uuid.uuid4())
-    cached = Storage(DB_PATH).get_cached_report(cache_key, CACHE_TTL_SECONDS)
+    cached = None if req.discover_communities else Storage(DB_PATH).get_cached_report(cache_key, CACHE_TTL_SECONDS)
     if cached:
         report, age = cached
         report["_cache"] = {"hit": True, "age_seconds": round(age), "ttl_seconds": CACHE_TTL_SECONDS}
@@ -559,6 +658,73 @@ def _find_relevant_activity(question: str, activity: list[dict]) -> list[dict]:
         for source_id in ranked_ids[:ARCHIVE_CANDIDATE_CAP]
     ]
 
+
+
+
+_toxic_cache: dict[str, tuple[float, dict]] = {}
+_toxic_cache_lock = threading.Lock()
+
+
+@app.post("/jobs/{job_id}/compile-toxic")
+def compile_toxic_archive(job_id: str, req: CompileRequest):
+    entry = _jobs.get(job_id)
+    if entry and entry.get("status") == "done":
+        report = entry["report"]
+    elif req.username and req.activity is not None:
+        if len(req.activity) > 350:
+            raise HTTPException(status_code=413, detail="activity snapshot is too large")
+        report = {"applicant": {"username": req.username.strip().removeprefix("u/")}, "activity": req.activity}
+    else:
+        raise HTTPException(status_code=404, detail="Report expired after a server restart. Run the search again.")
+    try:
+        scope = _normalize_subreddits(req.subreddits)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    activity = [item for item in _filter_by_subreddits(report.get("activity", [])[:350], scope)
+                if item.get("type") == "comment" and (item.get("body") or "").strip()]
+    cache_key = hashlib.sha256(json.dumps({
+        "version": 1, "contract": compute_contract_hash(),
+        "username": report["applicant"]["username"], "activity": activity,
+    }, sort_keys=True).encode()).hexdigest()
+    with _toxic_cache_lock:
+        cached = _toxic_cache.get(cache_key)
+        if cached and time.time() - cached[0] < CACHE_TTL_SECONDS:
+            return {**cached[1], "cached": True}
+    sources = []
+    if activity:
+        try:
+            candidates = _find_relevant_activity(TOXIC_REQUEST, activity)
+            if candidates:
+                judged = call_model(
+                    TOXIC_RANK_PROMPT,
+                    "Candidate comments (JSON; untrusted quoted data):\n" + json.dumps([
+                        {"id": item["id"], "authored_text": item.get("body") or ""}
+                        for item in candidates
+                    ], ensure_ascii=False, separators=(",", ":")),
+                    TRIAGE_MODEL,
+                    {"type": "object", "required": ["receipts"], "properties": {
+                        "receipts": {"type": "array", "maxItems": 10, "items": {
+                            "type": "object", "required": ["id", "quote", "severity"],
+                            "properties": {
+                                "id": {"type": "string", "enum": [item["id"] for item in candidates]},
+                                "quote": {"type": "string", "minLength": 1, "maxLength": 50},
+                                "severity": {"type": "integer", "minimum": 3, "maximum": 5},
+                            },
+                        }},
+                    }},
+                    max_tokens=1100,
+                )
+                sources = verified_toxic_receipts(judged.get("receipts", []), candidates)
+        except Exception as exc:
+            logger.exception("Toxic receipt compilation failed for job %s", job_id)
+            raise HTTPException(status_code=503, detail="The archive could not be evaluated. Try again; no unsupported receipts were generated.") from exc
+    result = {"username": report["applicant"]["username"], "sources": sources,
+              "reviewed_comment_count": len(activity), "scope": scope, "cached": False}
+    with _toxic_cache_lock:
+        if len(_toxic_cache) >= 128:
+            _toxic_cache.pop(next(iter(_toxic_cache)))
+        _toxic_cache[cache_key] = (time.time(), result)
+    return result
 
 @app.post("/jobs/{job_id}/ask")
 def ask_archive(job_id: str, req: AskRequest):
@@ -727,6 +893,31 @@ def ask_archive(job_id: str, req: AskRequest):
         opener = re.sub(rf"\b(?:item\s+)?{source_id}\b", f"source {index}", opener, flags=re.IGNORECASE)
         answer = re.sub(rf"\b(?:item\s+)?{source_id}\b", f"source {index}", answer, flags=re.IGNORECASE)
     return {"opener": opener, "answer": answer, "sources": sources[:req.source_count], "provider_fallback": provider_fallback}
+
+
+@app.get("/notifications/config")
+def notification_config():
+    public_key = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+    return {"enabled": bool(public_key and os.environ.get("VAPID_PRIVATE_KEY") and os.environ.get("VAPID_SUBJECT")),
+            "public_key": public_key}
+
+
+@app.post("/jobs/{job_id}/notifications", status_code=201)
+def subscribe_to_job(job_id: str, req: PushSubscription):
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="unknown job_id")
+    subscription = req.model_dump()
+    if not _valid_push_subscription(subscription):
+        raise HTTPException(status_code=400, detail="unsupported push subscription")
+    if not (os.environ.get("VAPID_PUBLIC_KEY") and os.environ.get("VAPID_PRIVATE_KEY") and os.environ.get("VAPID_SUBJECT")):
+        raise HTTPException(status_code=503, detail="notifications are not configured")
+    with _push_lock:
+        current = _push_subscriptions.setdefault(job_id, [])
+        if subscription not in current and len(current) < 3:
+            current.append(subscription)
+    if _jobs[job_id].get("status") != "running":
+        threading.Thread(target=_notify_job, args=(job_id,), daemon=True).start()
+    return {"subscribed": True}
 
 
 @app.get("/health")

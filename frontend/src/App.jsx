@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { askArchive, cancelJob, startJob, waitForJob } from './lib/api';
 import { groupFindingsById } from './lib/findings';
 import { communityOptions, isInSubredditScope, metricsFromFindings } from './lib/subreddits';
@@ -7,6 +7,8 @@ import ActivityExplorer from './components/ActivityExplorer';
 import DetectiveMascot from './components/DetectiveMascot';
 import ExpandableText from './components/ExpandableText';
 import SubredditPicker from './components/SubredditPicker';
+import ToxicCompilation from './components/ToxicCompilation';
+import LoadingOptions from './components/LoadingOptions';
 import { buildRedditShareText, CANONICAL_SITE_URL } from './lib/shareText';
 import { loadingActivity } from './lib/loadingPreview';
 import { sourceExcerpt, sourceKind, sourceText } from './lib/sourceContent';
@@ -14,18 +16,21 @@ import { sourceExcerpt, sourceKind, sourceText } from './lib/sourceContent';
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 const CATEGORIES = ['all', 'conduct', 'bias', 'judgment', 'coordination', 'doxxing', 'self_description'];
 const LABELS = { conduct: 'Hostile', bias: 'Group attacks', judgment: 'Contradictions', coordination: 'Dogpiling', doxxing: 'Privacy', self_description: 'Personal details' };
+const RESUME_JOB_ID = new URLSearchParams(window.location.search).get('job');
 
 export default function App() {
   const [target, setTarget] = useState('');
   const [analysisSubreddits, setAnalysisSubreddits] = useState([]);
-  const [stage, setStage] = useState('idle');
+  const [stage, setStage] = useState(RESUME_JOB_ID ? 'running' : 'idle');
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
-  const [progress, setProgress] = useState({ phase: 'fetching', activity_preview: [], activity_total: 0 });
+  const [scopeRecovery, setScopeRecovery] = useState(null);
+  const [progress, setProgress] = useState({ phase: RESUME_JOB_ID ? 'analyzing' : 'fetching', activity_preview: [], activity_total: 0, api_job_id: RESUME_JOB_ID });
   const activeRun = useRef(null);
 
-  async function investigate(event) {
-    event.preventDefault();
+  async function investigate(event, overrideSubreddits, discoverCommunities = false) {
+    event?.preventDefault();
+    const selectedSubreddits = overrideSubreddits ?? analysisSubreddits;
     const raw = target.trim();
     const isUrl = raw.length > 30;
     const normalized = isUrl ? raw : (raw.toLowerCase().startsWith('u/') ? raw.slice(2) : raw);
@@ -37,18 +42,26 @@ export default function App() {
     }
     const run = { controller: new AbortController(), jobId: null };
     activeRun.current = run;
+    setAnalysisSubreddits(selectedSubreddits);
+    setScopeRecovery(null);
     setStage('running');
     setError('');
-    setProgress({ phase: 'fetching', activity_preview: [], activity_total: 0, analysis_scope: analysisSubreddits });
+    setProgress({ phase: 'fetching', activity_preview: [], activity_total: 0, analysis_scope: selectedSubreddits, discovery_only: discoverCommunities });
     try {
-      const { job_id } = await startJob(normalized, analysisSubreddits);
+      const { job_id } = await startJob(normalized, selectedSubreddits, discoverCommunities);
       run.jobId = job_id;
+      setProgress((value) => ({ ...value, api_job_id: job_id }));
       if (run.controller.signal.aborted) {
         await cancelJob(job_id).catch(() => undefined);
         return;
       }
-      const result = await waitForJob(job_id, { onTick: setProgress, signal: run.controller.signal });
+      const result = await waitForJob(job_id, { onTick: (entry) => setProgress((value) => ({ ...value, ...entry, api_job_id: job_id })), signal: run.controller.signal });
       if (result.status === 'cancelled') return;
+      if (result.status === 'scope_empty' || result.status === 'communities_ready') {
+        setScopeRecovery(result);
+        setStage('idle');
+        return;
+      }
       if (result.status === 'error') throw new Error(result.error || 'Investigation failed.');
       setReport({ ...result.report, api_job_id: job_id });
       setStage('done');
@@ -60,6 +73,35 @@ export default function App() {
       if (activeRun.current === run) activeRun.current = null;
     }
   }
+
+  useEffect(() => {
+    const jobId = RESUME_JOB_ID;
+    if (!jobId) return undefined;
+    const controller = new AbortController();
+    const run = { controller, jobId };
+    activeRun.current = run;
+    waitForJob(jobId, { signal: controller.signal, onTick: (entry) => setProgress((value) => ({ ...value, ...entry, api_job_id: jobId })) })
+      .then((result) => {
+        if (result.status === 'done') {
+          setReport({ ...result.report, api_job_id: jobId });
+          setStage('done');
+        } else if (result.status === 'scope_empty' || result.status === 'communities_ready') {
+          setTarget(result.username || '');
+          setScopeRecovery(result);
+          setStage('idle');
+        } else if (result.status === 'cancelled') {
+          setStage('idle');
+        } else if (result.status === 'error') {
+          setError(result.error || 'The report could not be completed.');
+          setStage('error');
+        }
+      })
+      .catch((reason) => {
+        if (reason.name !== 'AbortError') { setError(reason.message); setStage('error'); }
+      })
+      .finally(() => { if (activeRun.current === run) activeRun.current = null; });
+    return () => { controller.abort(); if (activeRun.current === run) activeRun.current = null; };
+  }, []);
 
   function cancelInvestigation() {
     const run = activeRun.current;
@@ -95,15 +137,38 @@ export default function App() {
             <input id="reddit-target" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Paste a post, comment, or username" disabled={stage === 'running'} autoFocus aria-describedby="input-help" aria-invalid={Boolean(error)} />
             <button disabled={stage === 'running'}>{stage === 'running' ? 'Looking...' : 'Find receipts'}</button>
           </div>
-          <SubredditPicker value={analysisSubreddits} onChange={setAnalysisSubreddits} disabled={stage === 'running'} label="Focus the investigation" help="Optional. Only selected communities will be sent through AI analysis." showPopular />
+          <button type="button" className="discover-communities" disabled={stage === 'running'} onClick={(event) => investigate(event, [], true)}>
+            <span aria-hidden="true">✦</span><span><strong>Find their top subreddit first</strong><small>See where they actually post before running AI analysis</small></span><b aria-hidden="true">→</b>
+          </button>
+          <div className="search-choice"><span>or choose communities yourself</span></div>
+          <SubredditPicker value={analysisSubreddits} onChange={(next) => { setAnalysisSubreddits(next); setScopeRecovery(null); }} disabled={stage === 'running'} label="Focus the investigation" help="Optional. Only selected communities will be sent through AI analysis." showPopular />
           <small id="input-help">Only public Reddit activity is reviewed. Results are cached for 3 days.</small>
         </form>
         {stage === 'running' && <LoadingState progress={progress} scope={analysisSubreddits} onCancel={cancelInvestigation} />}
+        {scopeRecovery && <ScopeRecovery recovery={scopeRecovery} onChoose={(name) => investigate(null, [name])} />}
         {error && <p className="error" role="alert">{error}</p>}
         <div className="trust-row" aria-label="Product principles"><span>✓ Exact quotes</span><span>✓ Direct source links</span><span>✓ No invented claims</span></div>
       </section>
     </main>
   </AppShell>;
+}
+
+function ScopeRecovery({ recovery, onChoose }) {
+  const isDiscovery = recovery.status === 'communities_ready';
+  const suggested = new Set(recovery.suggested_subreddits || []);
+  const communities = (recovery.community_counts || []).filter((item) => suggested.has(item.name)).slice(0, 5);
+  const requested = (recovery.requested_subreddits || []).map((name) => 'r/' + name).join(', ');
+  const totalCommunities = recovery.community_total || communities.length;
+  const remaining = Math.max(0, totalCommunities - communities.length);
+  return <section className="scope-recovery" aria-labelledby="scope-recovery-heading">
+    <p className="kicker">{isDiscovery ? 'TOP COMMUNITIES FOUND' : 'TRY A COMMUNITY THEY USE'}</p>
+    <h2 id="scope-recovery-heading">{isDiscovery ? (communities.length ? 'Most active in r/' + communities[0].name : 'No public activity found') : 'Nothing in ' + (requested || 'that selection')}</h2>
+    {communities.length ? <>
+      <p>We found {recovery.activity_total} fetched public items across {totalCommunities} communit{totalCommunities === 1 ? 'y' : 'ies'}. Their most-used communities are:</p>
+      <div className="scope-recovery-list">{communities.map((item, index) => <button type="button" key={item.name} onClick={() => onChoose(item.name)}><span><strong>r/{item.name}</strong>{index === 0 && <em>Recommended</em>}</span><b>{item.count} item{item.count === 1 ? '' : 's'} →</b></button>)}</div>
+      {remaining > 0 && <small>Plus {remaining} other communit{remaining === 1 ? 'y' : 'ies'} in the fetched history.</small>}
+    </> : <p>No public posts or comments were found for this account in the fetched history.</p>}
+  </section>;
 }
 
 function AppShell({ children, action }) {
@@ -113,12 +178,14 @@ function AppShell({ children, action }) {
 function LoadingState({ progress, scope = [], onCancel }) {
   const activity = loadingActivity(progress);
   const analyzing = progress.phase === 'analyzing';
+  const discovering = Boolean(progress.discovery_only);
   const scopeText = scope.length ? scope.map((name) => 'r/' + name).join(', ') : 'all communities';
   return <section className="loading-card" aria-label="Investigation progress">
     <div className="loading-status">
-      <div className="loading-status-copy" role="status" aria-live="polite"><div className="scanner"><i /></div><div><strong>{analyzing ? 'History loaded. Analyzing now...' : 'Fetching public history...'}</strong><p>{analyzing ? progress.activity_total + ' scoped public items found. You can start reading while deeper analysis continues.' : 'Loading activity from ' + scopeText + '.'}</p></div></div>
+      <div className="loading-status-copy" role="status" aria-live="polite"><div className="scanner"><i /></div><div><strong>{discovering ? 'Finding their top communities...' : analyzing ? 'History loaded. Analyzing now...' : 'Fetching public history...'}</strong><p>{discovering ? 'Counting public posts and comments. No AI analysis is running yet.' : analyzing ? progress.activity_total + ' scoped public items found. You can start reading while deeper analysis continues.' : 'Loading activity from ' + scopeText + '.'}</p></div></div>
       <button type="button" className="cancel-search" onClick={onCancel}>Cancel & edit search</button>
     </div>
+    <LoadingOptions jobId={progress.api_job_id} />
     {activity.length > 0 && <div className="loading-preview"><div className="loading-preview-head"><strong>Recent posts and comments</strong><span>Analysis is still running</span></div><div className="loading-preview-list">{activity.map((item) => <article key={item.type + '-' + item.id}><div className="loading-preview-type"><b>{sourceKind(item)}</b><span>r/{item.subreddit}</span></div><p>{sourceExcerpt(item, 160)}</p><div>{item.permalink && <a href={item.permalink} target="_blank" rel="noreferrer">View source ↗</a>}</div></article>)}</div></div>}
   </section>;
 }
@@ -207,6 +274,7 @@ function AskPanel({ report, subreddits, onScopeChange, options }) {
 
   return <section className="ask-card" aria-labelledby="ask-heading">
     <div className="ask-heading"><span className="spark">✦</span><div><p className="kicker">BUILD A CITED REPLY</p><h2 id="ask-heading">What do you want to know?</h2><p>Ask about a claim or pattern. The agent reviews only the communities selected below, then attaches exact receipts.</p></div></div>
+    <ToxicCompilation report={report} subreddits={subreddits} disabled={busy} />
     <div className="ask-controls">
       <SubredditPicker value={subreddits} onChange={changeScope} options={options} disabled={busy} label="Search within" help="All analyzed communities when empty." variant="compact" />
       <div className="source-count-control"><span id="source-count-label">Sources in reply</span><div className="source-count-tabs" role="group" aria-labelledby="source-count-label">{[1, 2, 3].map((count) => <button type="button" key={count} aria-pressed={sourceCount === count} disabled={busy} onClick={() => { setSourceCount(count); setResult(null); }}>{count}</button>)}</div></div>

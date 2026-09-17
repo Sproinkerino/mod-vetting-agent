@@ -111,3 +111,14 @@ ANTHROPIC_API_KEY=... pytest tests/test_orchestrator_integration.py -v
 # a real run
 ANTHROPIC_API_KEY=... python cli.py <username> --rules rules.txt --register register.txt
 ```
+
+
+## Optional Web Push notifications
+
+The loading screen always offers **Save to Home Screen**. Background completion alerts appear only when all three Render environment variables are configured:
+
+- `VAPID_PRIVATE_KEY` — server-only base64url DER private key
+- `VAPID_PUBLIC_KEY` — public application-server key
+- `VAPID_SUBJECT` — a contact URI such as `mailto:owner@example.com`
+
+Generate a compatible pair locally with `python scripts/generate_vapid.py`, copy the values into Render, and never commit the generated private value. iOS/iPadOS requires reddit-pi to be added to the Home Screen before it may request notification permission. The permission prompt is only shown after the user taps **Notify me when ready**.

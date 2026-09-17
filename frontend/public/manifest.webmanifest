@@ -1,0 +1,11 @@
+{
+  "name": "reddit-pi",
+  "short_name": "reddit-pi",
+  "description": "Cited analysis of public Reddit activity.",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef3f9",
+  "theme_color": "#3f8de3",
+  "icons": [{"src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}
