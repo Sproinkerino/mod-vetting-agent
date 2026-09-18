@@ -21,6 +21,8 @@ def test_homepage_crawler_foundation():
     assert "<h1>" in html
     assert 'property="og:url"' in html
     assert '"@type":"WebSite"' in html
+    assert "meta.name = 'robots'" in html
+    assert "has('job')" in html
     assert "IBM+Plex" not in html
     assert "family=Inter" in html
     css = (frontend / "src/index.css").read_text(encoding="utf-8")
