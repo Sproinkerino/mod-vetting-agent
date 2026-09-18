@@ -52,7 +52,6 @@ export async function askArchive(jobId, question, report, sourceCount = 1, subre
       activity: report?.activity || [],
       source_count: sourceCount,
       subreddits,
-      discover_communities: discoverCommunities,
     }),
   });
   if (!res.ok) {

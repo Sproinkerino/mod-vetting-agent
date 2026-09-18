@@ -1,0 +1,1 @@
+.guide-links{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;margin:18px auto 0;font-size:12px}.guide-links a{display:inline-flex;align-items:center;min-height:44px;color:var(--muted);text-underline-offset:3px}.guide-links a:hover{color:var(--blue)}.guide-links a:focus-visible{outline:3px solid var(--blue);outline-offset:4px;border-radius:3px}

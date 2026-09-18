@@ -36,6 +36,7 @@ import httpx
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -47,6 +48,26 @@ from mod_vetting.storage import Storage
 from mod_vetting.toxic_receipts import TOXIC_REQUEST, TOXIC_RANK_PROMPT, verified_toxic_receipts
 
 app = FastAPI(title="reddit-pi API")
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
+
+
+@app.middleware("http")
+async def search_index_policy(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets/") and response.status_code == 200:
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.startswith("/jobs") or "job" in request.query_params:
+        response.headers["Cache-Control"] = "no-store"
+    elif response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache"
+    if ("job" in request.query_params or path.startswith("/jobs")
+            or path.startswith("/notifications")
+            or path in {"/docs", "/redoc", "/openapi.json", "/health"}
+            or response.status_code >= 400):
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # read-only-ish evidence API; tighten if this ever holds real applicant data long-term

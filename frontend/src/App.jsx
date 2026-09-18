@@ -9,6 +9,7 @@ import ExpandableText from './components/ExpandableText';
 import SubredditPicker from './components/SubredditPicker';
 import ToxicCompilation from './components/ToxicCompilation';
 import LoadingOptions from './components/LoadingOptions';
+import GuideLinks from './components/GuideLinks';
 import { buildRedditShareText, CANONICAL_SITE_URL } from './lib/shareText';
 import { loadingActivity } from './lib/loadingPreview';
 import { sourceExcerpt, sourceKind, sourceText } from './lib/sourceContent';
@@ -149,6 +150,7 @@ export default function App() {
         {error && <p className="error" role="alert">{error}</p>}
         <div className="trust-row" aria-label="Product principles"><span>✓ Exact quotes</span><span>✓ Direct source links</span><span>✓ No invented claims</span></div>
       </section>
+      <GuideLinks />
     </main>
   </AppShell>;
 }

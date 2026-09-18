@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /docs
+Disallow: /redoc
+Disallow: /openapi.json
+
+Sitemap: https://reddit-pi.live/sitemap.xml
