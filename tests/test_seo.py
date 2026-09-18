@@ -20,6 +20,11 @@ def test_homepage_crawler_foundation():
     assert '<link rel="canonical" href="https://reddit-pi.live/"' in html
     assert "<h1>" in html
     assert 'property="og:url"' in html
+    assert '"@type":"WebSite"' in html
+    assert "IBM+Plex" not in html
+    assert "family=Inter" in html
+    css = (frontend / "src/index.css").read_text(encoding="utf-8")
+    assert "@import" not in css
     robots = (frontend / "public/robots.txt").read_text()
     assert "Sitemap: https://reddit-pi.live/sitemap.xml" in robots
     assert "Disallow: /jobs" not in robots

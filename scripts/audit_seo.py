@@ -15,9 +15,21 @@ class Page(HTMLParser):
         self.descriptions = []
         self.h1 = 0
         self.links = []
+        self.title = ""
+        self.in_title = False
+        self.assets = []
+        self.og_url = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == "title":
+            self.in_title = True
+        if tag == "meta" and attrs.get("property") == "og:url":
+            self.og_url.append(attrs.get("content"))
+        if tag == "script" and attrs.get("src"):
+            self.assets.append(attrs["src"])
+        if tag == "link" and attrs.get("rel") in {"stylesheet", "icon", "manifest", "apple-touch-icon"}:
+            self.assets.append(attrs.get("href", ""))
         if tag == "link" and attrs.get("rel") == "canonical":
             self.canonical.append(attrs.get("href"))
         if tag == "meta" and attrs.get("name") == "description":
@@ -27,10 +39,21 @@ class Page(HTMLParser):
         if tag == "a" and attrs.get("href"):
             self.links.append(attrs["href"])
 
+    def handle_data(self, data):
+        if self.in_title:
+            self.title += data
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self.in_title = False
+
 
 def audit(base):
     evidence = []
     failures = []
+    titles = set()
+    descriptions = set()
+    checked_links = set()
     with httpx.Client(timeout=45, follow_redirects=True) as client:
         sitemap = client.get(base + "/sitemap.xml")
         sitemap.raise_for_status()
@@ -50,15 +73,26 @@ def audit(base):
                 "one_h1": page.h1 == 1,
                 "indexable": "noindex" not in response.headers.get("x-robots-tag", ""),
                 "internal_links": bool(page.links),
+                "title_unique": bool(page.title.strip()) and page.title not in titles,
+                "description_unique": bool(page.descriptions) and page.descriptions[0] not in descriptions,
+                "social_url": page.og_url == [canonical],
             }
+            titles.add(page.title)
+            descriptions.update(page.descriptions)
             evidence.append({"path": path, "checks": checks})
             failures.extend(f"{path}: {key}" for key, ok in checks.items() if not ok)
-            for link in set(page.links):
+            for link in set(page.links + page.assets):
                 target = urljoin(base + path, link)
-                if urlparse(target).netloc == urlparse(base).netloc:
+                if urlparse(target).netloc == urlparse(base).netloc and target not in checked_links:
+                    checked_links.add(target)
                     linked = client.get(target)
                     if linked.status_code != 200:
                         failures.append(f"broken link: {target} ({linked.status_code})")
+                    if urlparse(target).path.startswith("/assets/") and linked.status_code == 200:
+                        if "immutable" not in linked.headers.get("cache-control", ""):
+                            failures.append(f"asset cache policy: {target}")
+                        if len(linked.content) > 1000 and linked.headers.get("content-encoding") != "gzip":
+                            failures.append(f"asset compression: {target}")
         robots = client.get(base + "/robots.txt")
         if robots.status_code != 200 or "Sitemap: https://reddit-pi.live/sitemap.xml" not in robots.text:
             failures.append("robots sitemap declaration")

@@ -38,3 +38,9 @@ Build baseline: main JS 243.65 kB / 78.96 kB gzip; CSS 26.02 kB / 5.87 kB gzip. 
 Methodology/data guide now explains archive source, external AI processing, incomplete coverage, opaque job-link access, optional push handling, and the distinction between cache expiry and deletion. Verified source has no scheduled report/checkpoint purge. Delivery adds gzip, immutable hashed-asset caching, HTML revalidation, and no-store for jobs. Fixed an existing follow-up question payload ReferenceError and added a regression test.
 
 Measurement setup and privacy-preserving operational checks are documented in SEO-MEASUREMENT.md. Not deployed yet. Remaining: browser/field performance measurements, Search Console access and submission, release verification and follow-up.
+
+## Production release evidence
+
+Commit 31adf0a deployed live through Render deployment dep-dam82kp7lnhs73cddhgg. Production audit passed for homepage plus four guides: statuses, canonical/description/headings, internal links, sitemap/robots, noindex job responses and true 404s. Live hashed JS returns gzip and immutable one-year cache headers. 93 backend and 17 frontend tests passed. Browser runtime failed to connect; PageSpeed API returned 429, so visual and Core Web Vitals evidence remains missing. Search Console needs authorized access.
+
+Follow-up performance inspection found unused IBM Plex requests in HTML and actual Inter font loaded through CSS @import. Moving Inter to the preconnected HTML head removes the chained font stylesheet discovery and unused font-family request without changing typography. Added truthful WebSite brand markup; stronger auditor checks unique metadata, social canonical and local asset availability/compression/cache.
