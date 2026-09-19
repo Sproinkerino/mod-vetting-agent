@@ -28,6 +28,8 @@ The public DNS check on 19 September 2026 found no Google site-verification TXT 
 - Content: queries with impressions but weak click-through; unanswered reader needs; inaccurate archive/retention claims.
 - Privacy: never export investigated usernames, question text, job identifiers, or push endpoints into acquisition analytics.
 
+The `SEO production health` GitHub workflow runs daily at approximately 00:17 UTC and can also be started manually. It is read-only: it audits sitemap entries, `lastmod`, unique metadata, canonicals, structured data, links, compression/caching, noindex behavior, both Render alias controls, and the IndexNow key. It never scans an account, invokes an LLM, or submits URLs. GitHub schedules can be delayed; a missed scheduled run is not proof that production failed.
+
 ## Acquisition and conversion
 
 Search Console measures search acquisition without adding client tracking. Conversion measurement is not implemented yet; if added, count generic events such as search_started, history_ready, and reply_copied without account/question content. Obtain appropriate analytics authorization and disclose processing before enabling an external service. Do not claim conversion improvements without comparable baseline data.
