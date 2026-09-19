@@ -38,5 +38,6 @@
 - The API service alias permanently redirects `/` and `/guides/*` to the canonical host while preserving query strings; API methods and `/health` remain available and excluded from indexing.
 - The separate static-service alias has no custom domains. Render header rule `hdr-dan49sajnfac73fah5c0` applies `X-Robots-Tag: noindex, nofollow` to `/*`, preventing the functional alias from competing with the canonical site. The canonical domain does not receive this header.
 - A nonexistent guide returns a real 404 with `X-Robots-Tag: noindex, nofollow`. The production JavaScript asset is gzip-compressed and carries one-year immutable caching.
+- IndexNow key ownership was verified live and the seven canonical sitemap URLs were submitted once on 19 September 2026; `api.indexnow.org` returned HTTP 202. This confirms receipt only, not crawling, indexing, or ranking. The submitter rejects non-HTTPS hosts, query strings, fragments, and paths outside `/` or `/guides/`.
 
 The full week-long project remains active; this is release evidence, not a completion certificate.
