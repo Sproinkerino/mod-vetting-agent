@@ -18,6 +18,7 @@
 - Browser runtime connection fails on this Windows environment; no visual mobile/browser pass claimed.
 - PageSpeed API returned HTTP 429; no Lighthouse, LCP, INP or CLS pass claimed.
 - Search Console ownership, sitemap submission, index selection and traffic baseline need authorized Google access. Render credentials do not provide it.
+- A public Google search check on 19 September 2026 returned no indexed `reddit-pi.live` pages. This is discovery evidence, not a substitute for Search Console's authoritative Indexing report.
 - Search ranking changes need observation over subsequent weeks. No traffic, CTR or conversion gain claimed.
 - Three-day cache reuse is not automatic deletion. Methodology guide discloses missing scheduled purge and job-link access limits.
 
@@ -28,5 +29,12 @@
 3. Obtain mobile visual and PageSpeed evidence; optimize based on measured bottlenecks rather than score speculation.
 4. Use real query/impression data to prioritize guide improvements. Candidate questions: missing history, fresh versus cached results, and choosing relevant community scope. Add content only where it resolves a distinct reader need.
 5. Compare equal acquisition windows, annotate release dates, and verify job results stay excluded. Do not publish username dossiers as SEO landing pages or export searched account data into analytics.
+
+## Production recheck: 19 September 2026
+
+- `https://reddit-pi.live/`, `robots.txt`, the five-URL sitemap, and the four deployed guides return 200.
+- HTTP and `www` permanently redirect to `https://reddit-pi.live/`.
+- The Render service hostname still returned duplicate public pages with 200. The local release now adds a narrowly scoped 308 redirect for `/` and `/guides/*` on `*.onrender.com`; API methods and `/health` remain untouched. Deployment verification is still required.
+- The new missing-history guide returned a correct noindex 404 because the six-guide release had not yet been deployed. The generated local sitemap contains the homepage plus six guides and `lastmod` values.
 
 The full week-long project remains active; this is release evidence, not a completion certificate.

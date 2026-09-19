@@ -37,7 +37,8 @@ def test_homepage_crawler_foundation():
 
 def test_built_guides_and_canonical_redirects():
     with TestClient(app) as client:
-        for slug in ("reddit-user-history", "filter-reddit-history-by-subreddit", "verify-reddit-quotes", "methodology-and-data"):
+        for slug in ("reddit-user-history", "filter-reddit-history-by-subreddit", "verify-reddit-quotes", "methodology-and-data",
+                     "why-reddit-history-is-missing", "cached-vs-fresh-reddit-search"):
             response = client.get(f"/guides/{slug}/")
             assert response.status_code == 200
             assert "<h1>" in response.text
@@ -47,6 +48,18 @@ def test_built_guides_and_canonical_redirects():
             assert redirect.status_code in (301, 307, 308)
         missing = client.get("/guides/nonexistent/")
         assert missing.status_code == 404
+
+
+def test_render_public_pages_permanently_redirect_to_canonical_host():
+    with TestClient(app, base_url="https://mod-vetting-frontend.onrender.com") as client:
+        home = client.get("/?utm_source=test", follow_redirects=False)
+        assert home.status_code == 308
+        assert home.headers["location"] == "https://reddit-pi.live/?utm_source=test"
+        guide = client.head("/guides/reddit-user-history/", follow_redirects=False)
+        assert guide.status_code == 308
+        assert guide.headers["location"] == "https://reddit-pi.live/guides/reddit-user-history/"
+        assert client.get("/health", follow_redirects=False).status_code == 200
+        assert client.post("/jobs", json={}).status_code != 308
 
 
 def test_transfer_and_cache_policies():

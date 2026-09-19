@@ -38,6 +38,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from mod_vetting.cancellation import JobCancelled
@@ -53,8 +54,15 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 @app.middleware("http")
 async def search_index_policy(request, call_next):
-    response = await call_next(request)
+    host = (request.url.hostname or "").casefold()
     path = request.url.path
+    if (host.endswith(".onrender.com") and request.method in {"GET", "HEAD"}
+            and (path == "/" or path.startswith("/guides/"))):
+        target = f"https://reddit-pi.live{path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+    response = await call_next(request)
     if path.startswith("/assets/") and response.status_code == 200:
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif path.startswith("/jobs") or "job" in request.query_params:
