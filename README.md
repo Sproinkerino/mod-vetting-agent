@@ -1,11 +1,27 @@
-# mod-vetting-agent
+# reddit-pi
+
+**[Search public Reddit user history at reddit-pi.live](https://reddit-pi.live/)**
+
+reddit-pi is a mobile-first public Reddit history research tool. Enter a username or paste a Reddit post or comment URL, narrow the history by subreddit, and ask focused questions about the available posts and comments. Answers include short quotes and links to the original Reddit context so readers can verify the evidence themselves.
+
+## What you can do
+
+- Explore available public posts and comments while deeper analysis runs.
+- Discover an account's most active communities and filter by subreddit.
+- Ask evidence-focused questions across the fetched history.
+- Produce compact, source-linked excerpts for mobile Reddit replies.
+- Reopen a saved report link without publishing username dossiers as search pages.
+
+Archive coverage can be incomplete or delayed. A missing result does not prove that a person never made a statement, and AI interpretation is not a verdict about someone's identity or character. Open the original source, check authorship and dates, and avoid using the tool for doxxing or coordinated harassment.
 
 Implementation of `implementation-spec.md` (the fixed version — see its
 own "Revision notes" section for what was fixed/dropped from the
 original spec before this was built, and this README for what changed
 *during* the build itself).
 
-## What this is
+## Original pipeline architecture
+
+This repository began as a moderator-vetting pipeline. The current web product has been reframed around evidence-first public-history research, but the original implementation notes remain below because they explain the grounding, scoring, and human-review foundations.
 
 A pipeline that reviews a moderator applicant's public Reddit history
 against a subreddit's rules and produces a cited, evidence-based report:
