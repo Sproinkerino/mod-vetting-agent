@@ -32,9 +32,11 @@
 
 ## Production recheck: 19 September 2026
 
-- `https://reddit-pi.live/`, `robots.txt`, the five-URL sitemap, and the four deployed guides return 200.
+- Commit `cbafd57` deployed live as Render deployment `dep-dan4877avr4c73a3e0kg`.
+- `https://reddit-pi.live/`, `robots.txt`, the seven-URL sitemap, and all six guides return 200. The production crawler audit passes every status, HTML, canonical, description, H1, indexability, internal-link, uniqueness and social-URL check.
 - HTTP and `www` permanently redirect to `https://reddit-pi.live/`.
-- The Render service hostname still returned duplicate public pages with 200. The local release now adds a narrowly scoped 308 redirect for `/` and `/guides/*` on `*.onrender.com`; API methods and `/health` remain untouched. Deployment verification is still required.
-- The new missing-history guide returned a correct noindex 404 because the six-guide release had not yet been deployed. The generated local sitemap contains the homepage plus six guides and `lastmod` values.
+- The API service alias permanently redirects `/` and `/guides/*` to the canonical host while preserving query strings; API methods and `/health` remain available and excluded from indexing.
+- The separate static-service alias has no custom domains. Render header rule `hdr-dan49sajnfac73fah5c0` applies `X-Robots-Tag: noindex, nofollow` to `/*`, preventing the functional alias from competing with the canonical site. The canonical domain does not receive this header.
+- A nonexistent guide returns a real 404 with `X-Robots-Tag: noindex, nofollow`. The production JavaScript asset is gzip-compressed and carries one-year immutable caching.
 
 The full week-long project remains active; this is release evidence, not a completion certificate.
