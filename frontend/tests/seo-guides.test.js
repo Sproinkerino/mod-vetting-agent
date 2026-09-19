@@ -13,6 +13,9 @@ test('guides have unique crawlable metadata, valid links and accessible semantic
   try {
     await buildGuides(folder);
     const sitemap = await readFile(join(folder, 'sitemap.xml'), 'utf8');
+    assert.equal(guides.length, 6);
+    assert.equal((sitemap.match(/<url>/g) || []).length, guides.length + 1);
+    assert.equal((sitemap.match(/<lastmod>2026-09-19<\/lastmod>/g) || []).length, guides.length + 1);
     for (const guide of guides) {
       const url = `https://reddit-pi.live/guides/${guide.slug}/`;
       const html = await readFile(join(folder, 'guides', guide.slug, 'index.html'), 'utf8');
@@ -28,8 +31,14 @@ test('guides have unique crawlable metadata, valid links and accessible semantic
       for (const link of doc.querySelectorAll('a')) {
         assert.ok(['/', ...guides.map((g) => `/guides/${g.slug}/`)].includes(new URL(link.href).pathname));
       }
-      const breadcrumbs = JSON.parse(doc.querySelector('script[type="application/ld+json"]').textContent);
+      const graph = JSON.parse(doc.querySelector('script[type="application/ld+json"]').textContent);
+      const breadcrumbs = graph['@graph'].find((item) => item['@type'] === 'BreadcrumbList');
+      const article = graph['@graph'].find((item) => item['@type'] === 'Article');
       assert.equal(breadcrumbs.itemListElement[1].item, url);
+      assert.equal(article.headline, guide.title);
+      assert.equal(article.description, guide.description);
+      assert.equal(article.dateModified, '2026-09-19');
+      assert.equal(doc.querySelector('time').dateTime, article.dateModified);
       const axeSource = await readFile(new URL('../node_modules/axe-core/axe.min.js', import.meta.url), 'utf8');
       dom.window.eval(axeSource);
       const result = await dom.window.axe.run(doc, {

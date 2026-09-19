@@ -50,6 +50,28 @@ export const guides = [
       ['Separate evidence from interpretation', 'AI-generated reply wording is a draft, not an independent fact-check. Every factual sentence should be supported by the selected receipts. Edit or discard a reply that overstates them. Do not use public-history research to expose private identities, organize harassment, or make unsupported character diagnoses.'],
     ],
   },
+  {
+    slug: 'why-reddit-history-is-missing', title: 'Why Reddit user history can be missing',
+    description: 'Understand why public Reddit posts or comments may be absent from a history search, and what you can check before drawing a conclusion.',
+    sections: [
+      ['A public archive is not a complete account record', 'reddit-pi searches available public archive data; it does not read a private Reddit account database. A post or comment may be unavailable because it was never archived, was removed before capture, is too recent, belongs to a private community, or falls outside the bounded history fetched for the scan. Missing text is therefore an absence of evidence, not evidence that the activity never existed.'],
+      ['Check that you searched the intended account', 'Confirm the spelling, capitalization, underscores, and any digits in the username. If you started from a Reddit link, open the original conversation and verify which author the app identified. Deleted authors and similarly named accounts can make attribution impossible or misleading.'],
+      ['Remove an overly narrow community filter', 'A subreddit filter only keeps available activity from the selected communities. If that scope is empty, review the suggested communities found in the fetched history or start a broader search without a subreddit selection. A filter cannot reveal content that was absent from the underlying archive.'],
+      ['Compare the dates and try a fresh scan later', 'A reused report can be up to three days old. Recent activity may not appear in that cached result, and a fresh scan may still lag behind Reddit because archive ingestion is not instantaneous. Check the source date on Reddit and avoid presenting a timing gap as a contradiction.'],
+      ['Use another source for high-stakes verification', 'Open the account on Reddit, search the relevant community, and retain the original permalink when it is available. For employment, identity, safety, legal, or other consequential claims, public comment history alone is not a reliable verification method. Describe the limitation directly instead of filling the gap with an assumption.'],
+    ],
+  },
+  {
+    slug: 'cached-vs-fresh-reddit-search', title: 'Cached vs fresh Reddit history searches',
+    description: 'Learn when reddit-pi reuses a three-day report, what a cached result contains, and when a different scope creates a new analysis.',
+    sections: [
+      ['Why reddit-pi reuses completed analysis', 'AI review can take time and incur provider costs. When the same account, subreddit scope, and analysis contract are requested again within three days, reddit-pi can reuse the completed report instead of repeating the model calls. Reuse reduces waiting time and avoids charging for identical analysis.'],
+      ['What stays the same in a cached report', 'A reused report reflects the public activity and analysis captured by the earlier run. It does not silently append comments posted afterward. The evidence, scores, and generated summary should be read as a snapshot, with original dates and source links checked before use.'],
+      ['What creates a different analysis', 'Changing the selected subreddit scope changes the scan input and therefore its cache identity. Application updates that change the analysis contract can also invalidate reuse. Adjusting only the completed report view does not rerun the model or add communities excluded at the beginning.'],
+      ['Questions and compiled receipts are separate calls', 'Follow-up questions and toxic-receipt compilation evaluate the available archive for that job. They can make additional AI calls even when the main report was reused. Their answers remain limited by the activity that was fetched and by the selected question scope.'],
+      ['Choose accuracy over apparent certainty', 'Use cached results for quick review when the snapshot is recent enough for your purpose. If timing matters, compare the source dates with current Reddit activity and state that archive coverage may lag. Neither a cached nor a fresh scan proves that it contains every public statement by an account.'],
+    ],
+  },
 ];
 
 const esc = (value) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -58,19 +80,26 @@ const css = `:root{--ink:#26374c;--muted:#56677a;--blue:#1764ad;--bg:#eef3f9;--c
 
 export async function buildGuides(outDir) {
   const urls = ['https://reddit-pi.live/'];
+  const reviewed = '2026-09-19';
   for (const guide of guides) {
     const url = `https://reddit-pi.live/guides/${guide.slug}/`;
     urls.push(url);
-    const breadcrumbs = { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [
+    const breadcrumbs = { '@type': 'BreadcrumbList', itemListElement: [
       { '@type': 'ListItem', position: 1, name: 'reddit-pi', item: 'https://reddit-pi.live/' },
       { '@type': 'ListItem', position: 2, name: guide.title, item: url },
     ] };
-    const html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(guide.title)} | reddit-pi</title><meta name="description" content="${esc(guide.description)}"><link rel="canonical" href="${url}"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta property="og:type" content="article"><meta property="og:site_name" content="reddit-pi"><meta property="og:title" content="${esc(guide.title)}"><meta property="og:description" content="${esc(guide.description)}"><meta property="og:url" content="${url}"><meta name="twitter:card" content="summary"><style>${css}</style><script type="application/ld+json">${JSON.stringify(breadcrumbs)}</script></head><body><a class="skip" href="#main-content">Skip to content</a><header><a href="/" aria-label="reddit-pi home">reddit-pi</a><a href="/#reddit-target">Search public history</a></header><main id="main-content"><article><p class="summary">reddit-pi product guide · Reviewed 18 September 2026</p><h1>${esc(guide.title)}</h1><p class="summary">${esc(guide.description)}</p>${guide.sections.map(([heading, body]) => `<section><h2>${esc(heading)}</h2><p>${esc(body)}</p></section>`).join('')}<a class="cta" href="/">Try a public Reddit history search →</a></article><nav aria-label="Related guides"><h2>Related guides</h2>${links}</nav></main><footer>Independent tool; not affiliated with Reddit. Public archives can be incomplete. Verify original context before sharing a claim.</footer></body></html>`;
+    const article = { '@type': 'Article', headline: guide.title, description: guide.description, url,
+      datePublished: '2026-09-18', dateModified: reviewed,
+      author: { '@type': 'Organization', name: 'reddit-pi' },
+      publisher: { '@type': 'Organization', name: 'reddit-pi', url: 'https://reddit-pi.live/' },
+    };
+    const structuredData = { '@context': 'https://schema.org', '@graph': [breadcrumbs, article] };
+    const html = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(guide.title)} | reddit-pi</title><meta name="description" content="${esc(guide.description)}"><link rel="canonical" href="${url}"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta property="og:type" content="article"><meta property="og:site_name" content="reddit-pi"><meta property="og:title" content="${esc(guide.title)}"><meta property="og:description" content="${esc(guide.description)}"><meta property="og:url" content="${url}"><meta property="article:modified_time" content="${reviewed}T00:00:00+08:00"><meta name="twitter:card" content="summary"><style>${css}</style><script type="application/ld+json">${JSON.stringify(structuredData)}</script></head><body><a class="skip" href="#main-content">Skip to content</a><header><a href="/" aria-label="reddit-pi home">reddit-pi</a><a href="/#reddit-target">Search public history</a></header><main id="main-content"><article><p class="summary">reddit-pi product guide · Reviewed <time datetime="${reviewed}">19 September 2026</time></p><h1>${esc(guide.title)}</h1><p class="summary">${esc(guide.description)}</p>${guide.sections.map(([heading, body]) => `<section><h2>${esc(heading)}</h2><p>${esc(body)}</p></section>`).join('')}<a class="cta" href="/">Try a public Reddit history search →</a></article><nav aria-label="Related guides"><h2>Related guides</h2>${links}</nav></main><footer>Independent tool; not affiliated with Reddit. Public archives can be incomplete. Verify original context before sharing a claim.</footer></body></html>`;
     const folder = resolve(outDir, 'guides', guide.slug);
     await mkdir(folder, { recursive: true });
     await writeFile(resolve(folder, 'index.html'), html);
   }
-  await writeFile(resolve(outDir, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map((url) => `<url><loc>${url}</loc></url>`).join('')}</urlset>`);
+  await writeFile(resolve(outDir, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map((url) => `<url><loc>${url}</loc><lastmod>${reviewed}</lastmod></url>`).join('')}</urlset>`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
