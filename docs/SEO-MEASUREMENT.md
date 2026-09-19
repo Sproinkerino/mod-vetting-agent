@@ -18,6 +18,8 @@ Use an authorized Google Search Console account to add the Domain property reddi
 
 Search Console access is not implied by access to Render or Namecheap. Do not reuse unrelated Google tokens found on disk or claim ownership verification without evidence.
 
+The public DNS check on 19 September 2026 found no Google site-verification TXT record. IndexNow is implemented separately for participating search engines: the public key file proves host control, and `python scripts/submit_indexnow.py` submits only HTTPS URLs from the canonical sitemap after validating their host and excluding query strings. IndexNow notification does not guarantee crawling, indexing, or ranking and does not replace Search Console.
+
 ## Weekly checks
 
 - Search Console: indexed intended pages, excluded result URLs, crawl errors, queries, impressions, clicks, click-through rate, average position. Compare equal date windows and annotate release dates.
