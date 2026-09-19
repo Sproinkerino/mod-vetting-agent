@@ -24,7 +24,8 @@ def test_homepage_crawler_foundation():
     assert "meta.name = 'robots'" in html
     assert "has('job')" in html
     assert "IBM+Plex" not in html
-    assert "family=Inter" in html
+    assert "fonts.googleapis.com" not in html
+    assert "fonts.gstatic.com" not in html
     css = (frontend / "src/index.css").read_text(encoding="utf-8")
     assert "@import" not in css
     robots = (frontend / "public/robots.txt").read_text()
